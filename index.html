@@ -1,0 +1,916 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tournoi de Pétanque — SOLEAM 70 ans</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Raleway:wght@500;600;700;800&family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+<style>
+  :root{
+    /* Palette recalée sur la charte SOLEAM : bleu nuit officiel (#223958) comme base,
+       jaune officiel (#f9c24d) comme accent principal, rouge officiel (#e33134) pour les litiges.
+       Le thème reste sombre (meilleur contraste en plein soleil qu'un fond clair qui reflète) :
+       on garde donc des dérivés plus foncés/plus clairs du bleu nuit plutôt que le bleu ciel
+       officiel en fond, qui serait trop proche du texte clair en luminosité. */
+    --navy-deep:#152740;
+    --navy-surface:#1c3454;
+    --navy-card:#223958; /* = Bleu nuit SOLEAM officiel */
+    --line:#3a577c;
+    --sable:#f9c24d; /* = Jaune SOLEAM officiel */
+    --sable-soft:#fcd77e;
+    --bleu-ciel:#6d9bd6; /* = Bleu ciel SOLEAM officiel, éclairci pour rester lisible en accent
+                             sur fond sombre — sert à distinguer visuellement l'onglet Consolante
+                             du tableau principal (jaune), pas juste décoratif */
+    --rouille:#e33134; /* = Rouge SOLEAM officiel */
+    --vert:#4f9d69; /* hors charte : conservé pour le statut "Terminé", le vert est le seul
+                        code couleur universellement lu comme "OK" en un coup d'œil sur le terrain */
+    --text:#f7f5f0;
+    --text-dim:#b7c4d6;
+    --text-faint:#7c93ac;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{
+    font-family:'Source Sans 3',-apple-system,sans-serif;
+    background:var(--navy-deep);
+    color:var(--text);
+    min-height:100vh;
+    padding-bottom:60px;
+  }
+  .display{font-family:'Raleway',sans-serif; font-weight:800;}
+
+  header{
+    padding:20px 18px 0;
+    border-bottom:1px solid var(--line);
+    /* Voile allégé : l'ancien réglage (90 -> 97 % d'opacité) rendait la photo
+       quasi invisible. Ici 58 % en haut, 84 % en bas — le dégradé garde le texte
+       lisible en bas là où il est dense, et laisse respirer le ciel et les
+       platanes en haut. */
+    background:
+      radial-gradient(480px 220px at 78% -30%, rgba(249,194,77,0.13), transparent 70%),
+      linear-gradient(180deg, rgba(21,39,64,0.58) 0%, rgba(21,39,64,0.72) 45%, rgba(21,39,64,0.88) 100%),
+      url('photo-terrain.jpg');
+    background-size:auto, auto, cover;
+    background-position:center, center, center 40%;
+    position:sticky; top:0; z-index:20;
+    overflow:hidden;
+  }
+  .date-badge{
+    position:absolute; top:18px; right:16px;
+    display:flex; align-items:center; gap:2px; height:46px;
+  }
+  .date-badge img{height:46px; width:auto;}
+  .date-badge img.sep{height:27px; opacity:0.8; margin:0 3px; align-self:center;}
+  .eyebrow{
+    font-size:11px; letter-spacing:0.16em; text-transform:uppercase;
+    color:var(--sable); font-weight:700; margin-bottom:8px;
+    cursor:default; user-select:none; display:inline-block;
+  }
+  h1{
+    font-family:'Raleway',sans-serif; font-weight:800;
+    font-size:27px; line-height:1.05; letter-spacing:-0.01em;
+    display:flex; align-items:baseline; gap:11px; flex-wrap:wrap;
+  }
+  h1 .num{font-size:46px; font-weight:800; color:var(--sable-soft); letter-spacing:-0.02em;}
+  .meta{font-size:12.5px; color:var(--text-dim); margin-top:8px; padding-bottom:18px;}
+
+  .tabs{
+    display:flex; gap:6px; margin-top:18px; background:var(--navy-deep);
+    border:1px solid var(--line); border-radius:12px; padding:4px;
+  }
+  .tab{
+    flex:1; text-align:center; padding:10px 8px; border-radius:9px;
+    font-size:13px; font-weight:700; cursor:pointer; color:var(--text-dim);
+    transition:all .15s;
+  }
+  .tab.active{background:var(--sable); color:#20140a;}
+  .tab.active[data-tab="consolante"]{background:var(--bleu-ciel); color:#0c1c30;}
+
+  .bandeau{
+    height:14px; margin:16px -18px 0; background-size:cover; background-position:center;
+    background-image:url('bandeau-soleam.png'); background-repeat:no-repeat; background-size:100% auto;
+    opacity:0.9;
+  }
+
+  main{padding:18px 14px; max-width:980px; margin:0 auto;}
+
+  .sync{
+    display:flex; align-items:center; justify-content:space-between;
+    font-size:11.5px; color:var(--text-faint); margin-bottom:16px;
+    padding:0 2px;
+  }
+  .sync .dot{color:var(--vert); margin-right:5px;}
+  .sync button{
+    background:none; border:1px solid var(--line); color:var(--text-dim);
+    border-radius:7px; padding:5px 10px; font-size:11.5px; cursor:pointer;
+  }
+
+  .round-title{
+    font-size:12px; text-transform:uppercase; letter-spacing:0.1em;
+    color:var(--text-faint); margin:20px 0 10px; font-weight:700;
+    position:relative; z-index:1; padding-left:2px;
+  }
+  .round-title:first-child{margin-top:0;}
+  .round-title .rnum{
+    position:absolute; left:-6px; top:-19px; height:56px; width:auto;
+    opacity:0.16; z-index:-1; pointer-events:none;
+  }
+
+  /* Format tableau : un seul bloc encadré par tour, les matchs sont des lignes
+     séparées par un filet — au lieu de 8 cartes flottantes espacées de 10 px.
+     Chaque match occupe 2 lignes (une par équipe) pour accepter des noms de
+     n'importe quelle longueur sans troncature. */
+  .matches-col{
+    display:block; margin-bottom:6px;
+    border:1px solid var(--line); border-radius:12px; overflow:hidden;
+    background:var(--navy-card);
+  }
+
+  .match{
+    padding:11px 13px 10px; cursor:pointer;
+    border-top:1px solid rgba(58,87,124,0.55);
+    transition:background .15s;
+    position:relative;
+  }
+  .match:first-child{border-top:none;}
+  .match:active{background:rgba(109,155,214,0.09);}
+  /* Filet de statut sur le bord gauche : lisible d'un coup d'œil en balayant
+     la colonne, sans consommer de largeur pour du texte. */
+  .match::before{
+    content:''; position:absolute; left:0; top:0; bottom:0; width:3px;
+    background:transparent;
+  }
+  .match.termine::before{background:var(--vert);}
+  .match.litige::before{background:var(--rouille);}
+  .match.litige{background:rgba(227,49,52,0.09);}
+  .match.attente{opacity:0.5; cursor:default;}
+
+  .match-row{
+    display:flex; justify-content:space-between; align-items:baseline;
+    gap:12px; padding:2px 0;
+  }
+  /* Le nom prend toute la largeur restante et passe à la ligne si besoin :
+     c'est le choix assumé de la variante "noms libres". */
+  .team-name{font-size:14px; font-weight:500; flex:1; min-width:0; line-height:1.3;}
+  .team-name.winner{color:var(--sable-soft); font-weight:700;}
+  /* tabular-nums : les chiffres ont tous la même largeur, donc les scores
+     restent alignés verticalement d'une ligne à l'autre. */
+  .team-score{
+    font-size:15px; font-weight:700; font-variant-numeric:tabular-nums;
+    color:var(--text-dim); flex:0 0 auto; min-width:26px; text-align:right;
+  }
+  /* Le cerclage est posé en background de l'élément lui-même, pas en
+     pseudo-élément à z-index négatif. Un z-index:-1 se peint avant les fonds
+     des blocs parents : le fond de la ligne recouvrait le trait rouge, qui
+     n'était donc jamais visible. Ici le texte se dessine par-dessus son propre
+     fond, sans dépendre d'aucun contexte d'empilement. */
+  .team-score.winner{
+    color:var(--sable-soft);
+    display:inline-block; min-width:38px; text-align:center;
+    padding:7px 13px; margin:-5px -7px -5px 0;
+    background-image:url('entourage-gagnant.png');
+    background-size:100% 100%; background-repeat:no-repeat;
+    background-position:center;
+  }
+  .vs-mini{display:none;}
+
+  .badge{
+    display:inline-block; font-size:9.5px; font-weight:700; text-transform:uppercase;
+    letter-spacing:0.05em; padding:2px 7px; border-radius:5px; margin-top:6px;
+  }
+  .badge.attente{background:rgba(159,179,192,0.15); color:var(--text-dim);}
+  .badge.jouer{background:rgba(217,165,74,0.18); color:var(--sable-soft);}
+  .badge.partiel{background:rgba(217,165,74,0.18); color:var(--sable-soft);}
+  .badge.litige{background:rgba(193,98,47,0.22); color:#e8956a;}
+  .badge.termine{background:rgba(79,157,105,0.18); color:#7bc491;}
+
+  /* Modal */
+  .overlay{
+    position:fixed; inset:0; background:rgba(5,12,18,0.75);
+    display:none; align-items:flex-end; justify-content:center; z-index:100;
+    backdrop-filter:blur(2px);
+  }
+  .overlay.open{display:flex;}
+  .sheet{
+    background:var(--navy-surface); border:1px solid var(--line);
+    border-radius:18px 18px 0 0; padding:22px 20px 26px; width:100%;
+    max-width:480px; max-height:88vh; overflow-y:auto;
+  }
+  @media(min-width:600px){
+    .overlay{align-items:center;}
+    .sheet{border-radius:16px;}
+  }
+  .sheet h2{font-size:17px; margin-bottom:4px;}
+  .sheet .sub{font-size:12.5px; color:var(--text-dim); margin-bottom:18px;}
+  .field{margin-bottom:14px;}
+  .field label{font-size:12px; color:var(--text-dim); display:block; margin-bottom:6px;}
+  .score-pair{display:flex; gap:10px;}
+  .score-pair .field{flex:1;}
+  input[type=number], input[type=text], select{
+    width:100%; background:var(--navy-card); border:1px solid var(--line);
+    color:var(--text); border-radius:10px; padding:12px; font-size:16px;
+    font-family:'Source Sans 3',sans-serif;
+  }
+  input:focus, select:focus{outline:2px solid var(--sable); outline-offset:1px;}
+  .tie-note{
+    font-size:12px; color:var(--sable-soft); background:rgba(217,165,74,0.1);
+    border-radius:8px; padding:10px 12px; margin-bottom:14px; line-height:1.4;
+  }
+  .btn-row{display:flex; gap:10px; margin-top:18px;}
+  button.primary{
+    flex:1; background:var(--sable); color:#20140a; border:none;
+    border-radius:10px; padding:14px; font-size:15px; font-weight:700; cursor:pointer;
+  }
+  button.ghost{
+    background:none; border:1px solid var(--line); color:var(--text-dim);
+    border-radius:10px; padding:14px 18px; font-size:14px; cursor:pointer;
+  }
+  .submissions-view{margin-bottom:16px;}
+  .sub-row{
+    display:flex; justify-content:space-between; padding:9px 0;
+    border-bottom:1px solid var(--line); font-size:13px;
+  }
+  .sub-row:last-child{border-bottom:none;}
+  .sub-row .who{color:var(--text-dim);}
+  .close-x{
+    position:absolute; top:16px; right:16px; background:none; border:none;
+    color:var(--text-dim); font-size:20px; cursor:pointer; line-height:1;
+  }
+  .sheet{position:relative;}
+  .err-msg{color:#e8956a; font-size:12.5px; margin-top:10px; text-align:center;}
+
+  /* Admin */
+  .admin-banner{
+    background:rgba(193,98,47,0.15); border:1px solid rgba(193,98,47,0.4);
+    color:#e8956a; font-size:12px; padding:10px 14px; border-radius:10px;
+    margin-bottom:16px; font-weight:600;
+  }
+  .admin-section{
+    background:var(--navy-surface); border:1px solid var(--line);
+    border-radius:14px; padding:16px; margin-bottom:16px;
+  }
+  .admin-section h3{font-size:13px; text-transform:uppercase; letter-spacing:0.06em; color:var(--text-dim); margin-bottom:12px;}
+  .team-edit-row{display:flex; align-items:center; gap:8px; margin-bottom:8px;}
+  .team-edit-row span{font-size:11px; color:var(--text-faint); width:20px;}
+  .litige-card{
+    background:var(--navy-card); border:1px solid rgba(193,98,47,0.4);
+    border-radius:12px; padding:14px; margin-bottom:12px;
+  }
+  .danger-btn{
+    background:none; border:1px solid var(--rouille); color:var(--rouille);
+    border-radius:10px; padding:12px; font-size:13px; font-weight:600;
+    cursor:pointer; width:100%;
+  }
+  .empty{color:var(--text-faint); font-size:13px; text-align:center; padding:20px 0;}
+  .save-row{display:flex; gap:10px; margin-top:8px;}
+</style>
+</head>
+<body>
+
+<header>
+  <img src="logo-soleam-blanc.png" alt="SOLEAM" style="height:46px; margin-bottom:16px; display:block;">
+  <div class="date-badge" aria-hidden="true">
+    <img src="digit-1.png" alt="">
+    <img src="digit-8.png" alt="">
+    <img class="sep" src="slash-date.png" alt="">
+    <img src="digit-0.png" alt="">
+    <img src="digit-9.png" alt="">
+  </div>
+  <div class="eyebrow" id="modeLabel">Tournoi</div>
+  <h1><span class="num">70</span> <span>ans SOLEAM</span></h1>
+  <div class="meta">Tournoi de pétanque · Triplettes · 18 sept. 2026 · La Ciotat</div>
+  <div class="tabs" id="tabs">
+    <div class="tab active" data-tab="principal">Tableau principal</div>
+    <div class="tab" data-tab="consolante">Consolante</div>
+  </div>
+  <div class="bandeau"></div>
+</header>
+
+<main>
+  <div class="sync" id="syncBar">
+    <span><span class="dot">●</span> <span id="syncTxt">connexion…</span> <span style="color:#5a708c;">· v5</span></span>
+    <button id="refreshBtn">Actualiser</button>
+  </div>
+
+  <div id="publicView"></div>
+  <div id="adminView" style="display:none;"></div>
+</main>
+
+<div class="overlay" id="overlay">
+  <div class="sheet" id="sheet"></div>
+</div>
+
+<script>
+// ====== CONFIG ======
+// La clé anon est publique par design : elle est livrée dans le JS à chaque
+// navigateur. Ce n'est pas un secret. La protection vient des policies RLS
+// définies sur la table (lecture/écriture ouvertes, AUCUNE suppression possible),
+// pas de la confidentialité de la clé.
+const SUPABASE_URL = 'https://etnzcjozmblbufojvtok.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImV0bnpjam96bWJsYnVmb2p2dG9rIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODUzOTA0MzgsImV4cCI6MjEwMDk2NjQzOH0.3Atj7XbCnNUDGXsY80HmrR1dvy0htAxOu3CuiR5llBI';
+// Code d'accès à la vue organisateur. À changer avant le jour J.
+// Rappel : ce code est lisible dans le source par n'importe qui. Il filtre les
+// curieux, pas les déterminés. C'est pourquoi aucune action destructive n'est
+// accessible depuis la vue organisateur.
+const ADMIN_CODE = 'SOLEAM70';
+// ====================
+
+// ---------- Couche de stockage ----------
+// Aucune librairie externe. L'ancienne version chargeait supabase-js (60 Ko) depuis
+// un CDN tiers AVANT de pouvoir afficher quoi que ce soit : si ce CDN était lent ou
+// filtré par le réseau, l'app restait bloquée sur "connexion…" sans message d'erreur.
+// Supabase expose une API REST standard ; deux appels fetch suffisent.
+const REST = SUPABASE_URL + '/rest/v1/tournoi_kv';
+const HEADERS = {
+  'apikey': SUPABASE_ANON_KEY,
+  'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
+  'Content-Type': 'application/json'
+};
+
+// Toute requête abandonne au bout de 8 secondes. Sans ça, un réseau qui ne répond
+// pas (plutôt qu'un réseau qui refuse) laisse l'app attendre indéfiniment.
+async function req(url, options = {}){
+  const ctrl = new AbortController();
+  const timer = setTimeout(()=>ctrl.abort(), 8000);
+  try{
+    const r = await fetch(url, {...options, headers:{...HEADERS, ...(options.headers||{})}, signal:ctrl.signal});
+    if(!r.ok){
+      const detail = (await r.text()).slice(0,200);
+      throw new Error(`HTTP ${r.status} — ${detail}`);
+    }
+    return r;
+  }catch(e){
+    if(e.name === 'AbortError') throw new Error('délai dépassé (8 s) — réseau trop lent ou injoignable');
+    throw e;
+  }finally{
+    clearTimeout(timer);
+  }
+}
+
+// Lecture de TOUTE la table en une requête : 24 matchs + les équipes.
+async function kvGetAll(){
+  const r = await req(REST + '?select=key,value');
+  const out = {};
+  for(const row of await r.json()) out[row.key] = row.value;
+  return out;
+}
+
+// Lecture d'une clé unique, utilisée juste avant une écriture pour repartir
+// de l'état le plus frais (saisie de score, résolution de litige).
+async function kvGet(key){
+  const r = await req(REST + '?select=value&key=eq.' + encodeURIComponent(key));
+  const d = await r.json();
+  return d.length ? d[0].value : null;
+}
+
+// Écriture groupée. "resolution=merge-duplicates" = upsert sur la clé primaire.
+async function kvSetMany(entries){
+  const now = new Date().toISOString();
+  const rows = entries.map(([key, value]) => ({ key, value, updated_at: now }));
+  await req(REST, {
+    method: 'POST',
+    headers: { 'Prefer': 'resolution=merge-duplicates,return=minimal' },
+    body: JSON.stringify(rows)
+  });
+  return true;
+}
+async function kvSet(key, value){ return kvSetMany([[key, value]]); }
+
+// Échappement de tout ce qui vient de la saisie utilisateur (noms d'équipe).
+// Sans ça, un nom contenant un guillemet double casse l'attribut HTML dans
+// lequel il est injecté, et l'affichage admin part en vrille.
+function esc(s){
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+const KEY_EQUIPES = 'petanque-equipes';
+const KEY_MATCH_PREFIX = 'petanque-match-';
+const DEVICE = 'D-' + Math.random().toString(36).slice(2,7).toUpperCase();
+let IS_ADMIN = sessionStorage.getItem('petanque-admin') === '1';
+
+// Déclencheur discret : taper 5 fois sur "Tournoi" en haut à gauche dans les 2,5s.
+(function setupAdminTrigger(){
+  let taps = 0, timer = null;
+  document.getElementById('modeLabel')?.addEventListener('click', ()=>{
+    taps++;
+    clearTimeout(timer);
+    timer = setTimeout(()=>{ taps = 0; }, 2500);
+    if(taps >= 5){
+      taps = 0;
+      const code = prompt('Code organisateur :');
+      if(code === ADMIN_CODE){
+        sessionStorage.setItem('petanque-admin','1');
+        location.reload();
+      } else if(code !== null){
+        alert('Code incorrect.');
+      }
+    }
+  });
+})();
+
+// ---- Topologie fixe du bracket ----
+// feedsTo: {matchId, slot} où le vainqueur atterrit au tour suivant
+// feedsToConsolante: {matchId, slot} où le PERDANT (tour 1 principal uniquement) atterrit
+const TOPOLOGY = {
+  'P1-1':{round:1,bracket:'principal',feedsTo:{m:'P2-1',slot:'A'},feedsConso:{m:'C1-1',slot:'A'}},
+  'P1-2':{round:1,bracket:'principal',feedsTo:{m:'P2-1',slot:'B'},feedsConso:{m:'C1-1',slot:'B'}},
+  'P1-3':{round:1,bracket:'principal',feedsTo:{m:'P2-2',slot:'A'},feedsConso:{m:'C1-2',slot:'A'}},
+  'P1-4':{round:1,bracket:'principal',feedsTo:{m:'P2-2',slot:'B'},feedsConso:{m:'C1-2',slot:'B'}},
+  'P1-5':{round:1,bracket:'principal',feedsTo:{m:'P2-3',slot:'A'},feedsConso:{m:'C1-3',slot:'A'}},
+  'P1-6':{round:1,bracket:'principal',feedsTo:{m:'P2-3',slot:'B'},feedsConso:{m:'C1-3',slot:'B'}},
+  'P1-7':{round:1,bracket:'principal',feedsTo:{m:'P2-4',slot:'A'},feedsConso:{m:'C1-4',slot:'A'}},
+  'P1-8':{round:1,bracket:'principal',feedsTo:{m:'P2-4',slot:'B'},feedsConso:{m:'C1-4',slot:'B'}},
+
+  'P2-1':{round:2,bracket:'principal',feedsTo:{m:'P3-1',slot:'A'}},
+  'P2-2':{round:2,bracket:'principal',feedsTo:{m:'P3-1',slot:'B'}},
+  'P2-3':{round:2,bracket:'principal',feedsTo:{m:'P3-2',slot:'A'}},
+  'P2-4':{round:2,bracket:'principal',feedsTo:{m:'P3-2',slot:'B'}},
+
+  'P3-1':{round:3,bracket:'principal',feedsTo:{m:'P4-1',slot:'A'}},
+  'P3-2':{round:3,bracket:'principal',feedsTo:{m:'P4-1',slot:'B'}},
+
+  'P4-1':{round:4,bracket:'principal',feedsTo:null},
+
+  'C1-1':{round:1,bracket:'consolante',feedsTo:{m:'C2-1',slot:'A'}},
+  'C1-2':{round:1,bracket:'consolante',feedsTo:{m:'C2-1',slot:'B'}},
+  'C1-3':{round:1,bracket:'consolante',feedsTo:{m:'C2-2',slot:'A'}},
+  'C1-4':{round:1,bracket:'consolante',feedsTo:{m:'C2-2',slot:'B'}},
+
+  'C2-1':{round:2,bracket:'consolante',feedsTo:{m:'C3-1',slot:'A'}},
+  'C2-2':{round:2,bracket:'consolante',feedsTo:{m:'C3-1',slot:'B'}},
+
+  'C3-1':{round:3,bracket:'consolante',feedsTo:null},
+};
+const ROUND_LABELS = {
+  // 16 équipes = 8 matchs au premier tour = 8es de finale.
+  // Les 16es supposeraient 32 équipes.
+  principal:{1:'8es de finale',2:'Quarts de finale',3:'Demi-finales',4:'Finale'},
+  consolante:{1:'1er tour consolante',2:'Demi-finale consolante',3:'Finale consolante'}
+};
+const ALL_MATCH_IDS = Object.keys(TOPOLOGY);
+
+let equipes = [];
+let matches = {}; // id -> state
+let currentTab = 'principal';
+let pollTimer = null;
+
+const $ = s => document.querySelector(s);
+
+// ---------- Bootstrap ----------
+// CORRECTION CRITIQUE.
+// L'ancienne version faisait : try { lire } catch { eq = null } puis
+// if(!eq) { réinitialiser les 24 matchs }.
+// Conséquence : la moindre coupure réseau au chargement était interprétée comme
+// "la base est vide", et le téléphone réinitialisait le tournoi POUR TOUT LE MONDE.
+// Sur un terrain en 4G instable, c'était une question de temps.
+//
+// Ici on distingue strictement les deux cas :
+//   - lecture en échec        -> on remonte l'erreur, on ne touche à RIEN
+//   - lecture réussie et vide -> et seulement là, on initialise
+async function ensureInit(){
+  const all = await kvGetAll();          // volontairement PAS de try/catch :
+                                          // une erreur doit remonter à init(), pas être avalée
+  const eq = all[KEY_EQUIPES];
+
+  if(Array.isArray(eq) && eq.length === 16){
+    equipes = eq;
+    hydrate(all);
+    return;
+  }
+
+  // Second garde-fou : si des matchs existent déjà, la base n'est pas vierge.
+  // On refuse d'initialiser même si la clé équipes est absente ou corrompue —
+  // mieux vaut un affichage incomplet qu'un tournoi effacé.
+  const matchsExistants = ALL_MATCH_IDS.some(id => all[KEY_MATCH_PREFIX+id]);
+  if(matchsExistants){
+    equipes = Array.isArray(eq) ? eq : Array.from({length:16}, (_,i)=>`Équipe ${i+1}`);
+    hydrate(all);
+    return;
+  }
+
+  // Base réellement vierge : premier lancement.
+  equipes = Array.from({length:16}, (_,i)=>`Équipe ${i+1}`);
+  await seedMatches(equipes);
+}
+
+async function seedMatches(eq){
+  const pairs = [];
+  for(let i=0;i<16;i+=2) pairs.push([eq[i], eq[i+1]]);
+  const seeds = {
+    'P1-1':pairs[0],'P1-2':pairs[1],'P1-3':pairs[2],'P1-4':pairs[3],
+    'P1-5':pairs[4],'P1-6':pairs[5],'P1-7':pairs[6],'P1-8':pairs[7],
+  };
+  const entries = [[KEY_EQUIPES, eq]];
+  for(const id of ALL_MATCH_IDS){
+    const seed = seeds[id];
+    entries.push([KEY_MATCH_PREFIX+id, {
+      id,
+      teamA: seed ? seed[0] : null,
+      teamB: seed ? seed[1] : null,
+      subA: null, subB: null,
+      status: seed ? 'a_jouer' : 'attente',
+      winner: null,
+      orga: null
+    }]);
+  }
+  // 1 requête au lieu de 25.
+  await kvSetMany(entries);
+}
+
+// Remplit l'état local à partir d'un instantané complet de la table.
+function hydrate(all){
+  for(const id of ALL_MATCH_IDS){
+    const s = all[KEY_MATCH_PREFIX+id];
+    if(s) matches[id] = s;
+  }
+}
+
+async function readMatch(id){
+  try{
+    return await kvGet(KEY_MATCH_PREFIX+id);
+  }catch(e){ return null; }
+}
+async function writeMatch(id, state){
+  return kvSet(KEY_MATCH_PREFIX+id, state);
+}
+
+// ---------- Poll / render ----------
+async function pollAll(){
+  try{
+    const all = await kvGetAll();          // 1 requête pour les 24 matchs + les équipes
+    hydrate(all);
+    const eq = all[KEY_EQUIPES];
+    if(Array.isArray(eq)) equipes = eq;
+    hideFatal();
+    setSync(true, 'synchro OK — ' + new Date().toLocaleTimeString('fr-FR'));
+    render();
+  }catch(e){
+    // On signale la panne sans jamais toucher aux données locales ni distantes :
+    // l'affichage reste sur le dernier état connu, la prochaine passe rattrapera.
+    setSync(false, 'hors ligne — nouvelle tentative dans 5 s');
+  }
+}
+
+function setSync(ok, txt){
+  $('#syncTxt').textContent = txt;
+  $('#syncBar .dot').style.color = ok ? '#4f9d69' : '#c1622f';
+}
+
+// Bandeau d'erreur visible à l'écran. Sans lui, une panne se traduit par un
+// écran figé et il faut ouvrir la console du navigateur pour comprendre —
+// impossible à demander à quelqu'un en plein tournoi.
+function showFatal(msg){
+  let el = document.getElementById('fatalBox');
+  if(!el){
+    el = document.createElement('div');
+    el.id = 'fatalBox';
+    el.style.cssText = 'background:rgba(227,49,52,0.14);border:1px solid rgba(227,49,52,0.5);'
+      + 'color:#f0a08a;font-size:12.5px;padding:12px 14px;border-radius:10px;margin-bottom:16px;'
+      + 'line-height:1.45;word-break:break-word;';
+    document.querySelector('main').prepend(el);
+  }
+  el.textContent = msg;
+}
+function hideFatal(){
+  const el = document.getElementById('fatalBox');
+  if(el) el.remove();
+}
+
+function statusBadge(m){
+  if(!m.teamA || !m.teamB) return {cls:'attente', label:'En attente des équipes'};
+  if(m.status === 'termine') return {cls:'termine', label:'Terminé'};
+  if(m.status === 'litige') return {cls:'litige', label:'Litige — organisateur'};
+  if(m.subA || m.subB) return {cls:'partiel', label:'1 saisie reçue — en attente de l\'autre'};
+  return {cls:'jouer', label:'À jouer'};
+}
+
+function matchCard(m){
+  const b = statusBadge(m);
+  const clickable = m.teamA && m.teamB && m.status !== 'termine';
+  const winnerIsA = m.status==='termine' && m.winner==='A';
+  const winnerIsB = m.status==='termine' && m.winner==='B';
+  // Garde : un match tranché par l'organisateur peut être "terminé" sans saisie A.
+  // L'ancienne version lisait m.subA.scoreA sans vérifier et plantait l'affichage
+  // de TOUT le tableau (une exception dans matchCard interrompt renderPublic).
+  const src = m.orga || m.subA || m.subB || null;
+  const scoreA = (m.status==='termine' && src) ? src.scoreA : '';
+  const scoreB = (m.status==='termine' && src) ? src.scoreB : '';
+  return `
+  <div class="match ${m.status==='termine'?'termine':''} ${m.status==='litige'?'litige':''} ${(!m.teamA||!m.teamB)?'attente':''}" ${clickable?`onclick="openMatch('${m.id}')"`:''}>
+    <div class="match-row">
+      <span class="team-name ${winnerIsA?'winner':''}">${esc(m.teamA) || '—'}</span>
+      <span class="team-score ${winnerIsA?'winner':''}">${scoreA}</span>
+    </div>
+    <div class="vs-mini">vs</div>
+    <div class="match-row">
+      <span class="team-name ${winnerIsB?'winner':''}">${esc(m.teamB) || '—'}</span>
+      <span class="team-score ${winnerIsB?'winner':''}">${scoreB}</span>
+    </div>
+    <span class="badge ${b.cls}">${b.label}</span>
+  </div>`;
+}
+
+function render(){
+  renderPublic();
+  if(IS_ADMIN) renderAdmin();
+}
+
+function renderPublic(){
+  const rounds = currentTab === 'principal' ? [1,2,3,4] : [1,2,3];
+  let html = '';
+  for(const r of rounds){
+    const ids = ALL_MATCH_IDS.filter(id => TOPOLOGY[id].bracket===currentTab && TOPOLOGY[id].round===r);
+    if(!ids.length) continue;
+    html += `<div class="round-title"><img class="rnum" src="round-${r}.png" alt="">${ROUND_LABELS[currentTab][r]}</div><div class="matches-col">`;
+    for(const id of ids){
+      const m = matches[id];
+      if(m) html += matchCard(m);
+    }
+    html += '</div>';
+  }
+  $('#publicView').innerHTML = html;
+}
+
+// ---------- Modal saisie score ----------
+function openMatch(id){
+  const m = matches[id];
+  if(!m || !m.teamA || !m.teamB) return;
+  const sheet = $('#sheet');
+  sheet.innerHTML = `
+    <button class="close-x" onclick="closeSheet()">✕</button>
+    <h2>${esc(m.teamA)} <span style="color:var(--text-faint)">vs</span> ${esc(m.teamB)}</h2>
+    <div class="sub">Saisis le score final du match. Le match passe à "Terminé" quand les deux équipes ont saisi le même résultat.</div>
+    ${(m.subA || m.subB) ? renderSubmissionsView(m) : ''}
+    <div class="field">
+      <label>Qui saisit ce score ?</label>
+      <select id="whoAmI">
+        <option value="A">${esc(m.teamA)}</option>
+        <option value="B">${esc(m.teamB)}</option>
+      </select>
+    </div>
+    <div class="score-pair">
+      <div class="field">
+        <label>Score ${esc(m.teamA)}</label>
+        <input type="number" id="scoreA" min="0" inputmode="numeric">
+      </div>
+      <div class="field">
+        <label>Score ${esc(m.teamB)}</label>
+        <input type="number" id="scoreB" min="0" inputmode="numeric">
+      </div>
+    </div>
+    <div id="tieZone"></div>
+    <div id="submitErr" class="err-msg"></div>
+    <div class="btn-row">
+      <button class="ghost" onclick="closeSheet()">Annuler</button>
+      <button class="primary" onclick="submitScore('${id}')">Valider mon score</button>
+    </div>
+  `;
+  $('#scoreA').addEventListener('input', ()=>checkTie(m));
+  $('#scoreB').addEventListener('input', ()=>checkTie(m));
+  $('#overlay').classList.add('open');
+}
+
+function renderSubmissionsView(m){
+  let rows = '';
+  if(m.subA) rows += `<div class="sub-row"><span class="who">${esc(m.teamA)} a saisi</span><span>${m.subA.scoreA} – ${m.subA.scoreB}${m.subA.tie?(', tir décisif: '+(m.subA.tie==='A'?esc(m.teamA):esc(m.teamB))):''}</span></div>`;
+  if(m.subB) rows += `<div class="sub-row"><span class="who">${esc(m.teamB)} a saisi</span><span>${m.subB.scoreA} – ${m.subB.scoreB}${m.subB.tie?(', tir décisif: '+(m.subB.tie==='A'?esc(m.teamA):esc(m.teamB))):''}</span></div>`;
+  const litigeNote = m.status==='litige' ? `<div class="tie-note" style="color:#e8956a;background:rgba(193,98,47,0.12);">Les deux saisies ne correspondent pas. Un organisateur tranchera — tu peux resaisir si tu t'es trompé.</div>` : '';
+  return `<div class="submissions-view">${rows}</div>${litigeNote}`;
+}
+
+function checkTie(m){
+  const a = parseInt($('#scoreA').value), b = parseInt($('#scoreB').value);
+  const zone = $('#tieZone');
+  if(!isNaN(a) && !isNaN(b) && a===b){
+    zone.innerHTML = `
+      <div class="tie-note">Scores égaux au coup de sifflet : qui a gagné le tir décisif ?</div>
+      <div class="field">
+        <select id="tieWinner">
+          <option value="A">${esc(m.teamA)}</option>
+          <option value="B">${esc(m.teamB)}</option>
+        </select>
+      </div>`;
+  } else {
+    zone.innerHTML = '';
+  }
+}
+
+async function submitScore(id){
+  const who = $('#whoAmI').value;
+  const scoreA = parseInt($('#scoreA').value);
+  const scoreB = parseInt($('#scoreB').value);
+  const errEl = $('#submitErr');
+  if(isNaN(scoreA) || isNaN(scoreB)){
+    errEl.textContent = 'Renseigne les deux scores.';
+    return;
+  }
+  let tie = null;
+  if(scoreA === scoreB){
+    const tieEl = $('#tieWinner');
+    if(!tieEl){ errEl.textContent = 'Indique qui a gagné le tir décisif.'; return; }
+    tie = tieEl.value;
+  }
+  errEl.textContent = '';
+  try{
+    const fresh = await readMatch(id);
+    if(!fresh){ errEl.textContent = 'Match introuvable, réessaie.'; return; }
+    const sub = {scoreA, scoreB, tie, dev:DEVICE, t:new Date().toLocaleTimeString('fr-FR')};
+    if(who==='A') fresh.subA = sub; else fresh.subB = sub;
+
+    if(fresh.subA && fresh.subB){
+      const match = fresh.subA.scoreA===fresh.subB.scoreA &&
+                    fresh.subA.scoreB===fresh.subB.scoreB &&
+                    fresh.subA.tie===fresh.subB.tie;
+      if(match){
+        fresh.status = 'termine';
+        // L'ancienne version comparait subA.scoreA à subB.scoreB : deux scores
+        // issus de deux saisies différentes. Ça ne donnait le bon résultat que
+        // parce qu'on est justement dans la branche où les deux saisies sont
+        // identiques. On compare désormais les deux scores d'une même saisie.
+        fresh.winner = fresh.subA.tie ? fresh.subA.tie : (fresh.subA.scoreA > fresh.subA.scoreB ? 'A' : 'B');
+        await writeMatch(id, fresh);
+        await propagate(id, fresh);
+      } else {
+        fresh.status = 'litige';
+        await writeMatch(id, fresh);
+      }
+    } else {
+      await writeMatch(id, fresh);
+    }
+    matches[id] = fresh;
+    closeSheet();
+    render();
+  }catch(e){
+    errEl.textContent = 'Écriture impossible, réessaie.';
+  }
+}
+
+async function propagate(id, resolved){
+  const topo = TOPOLOGY[id];
+  const winnerName = resolved.winner==='A' ? resolved.teamA : resolved.teamB;
+  const loserName = resolved.winner==='A' ? resolved.teamB : resolved.teamA;
+
+  if(topo.feedsTo){
+    const target = await readMatch(topo.feedsTo.m);
+    if(target){
+      target[topo.feedsTo.slot==='A'?'teamA':'teamB'] = winnerName;
+      if(target.teamA && target.teamB) target.status = 'a_jouer';
+      await writeMatch(topo.feedsTo.m, target);
+    }
+  }
+  if(topo.feedsConso){
+    const target = await readMatch(topo.feedsConso.m);
+    if(target){
+      target[topo.feedsConso.slot==='A'?'teamA':'teamB'] = loserName;
+      if(target.teamA && target.teamB) target.status = 'a_jouer';
+      await writeMatch(topo.feedsConso.m, target);
+    }
+  }
+}
+
+function closeSheet(){ $('#overlay').classList.remove('open'); }
+
+// ---------- Admin ----------
+function renderAdmin(){
+  const litigeIds = ALL_MATCH_IDS.filter(id => matches[id] && matches[id].status==='litige');
+  let html = `<div class="admin-banner">Mode organisateur — cette vue n'est pas destinée aux équipes</div>`;
+
+  html += `<div class="admin-section"><h3>Litiges en cours (${litigeIds.length})</h3>`;
+  if(!litigeIds.length){
+    html += `<div class="empty">Aucun litige pour l'instant.</div>`;
+  } else {
+    for(const id of litigeIds){
+      const m = matches[id];
+      html += `<div class="litige-card">
+        <div style="font-weight:600;margin-bottom:8px;">${esc(m.teamA)} vs ${esc(m.teamB)}</div>
+        ${renderSubmissionsView(m)}
+        <div class="btn-row" style="margin-top:10px;">
+          <button class="primary" style="flex:1" onclick="resolveDispute('${id}','A')">${esc(m.teamA)} gagne</button>
+          <button class="primary" style="flex:1;background:var(--text-dim);color:#0a1e2b" onclick="resolveDispute('${id}','B')">${esc(m.teamB)} gagne</button>
+        </div>
+      </div>`;
+    }
+  }
+  html += `</div>`;
+
+  html += `<div class="admin-section"><h3>Équipes (avant démarrage)</h3><div id="teamEdits">`;
+  equipes.forEach((name,i)=>{
+    html += `<div class="team-edit-row"><span>${i+1}.</span><input type="text" value="${esc(name)}" data-idx="${i}"></div>`;
+  });
+  html += `</div><div class="save-row"><button class="primary" onclick="saveTeams()">Enregistrer les équipes</button></div></div>`;
+
+  // Le bouton "Réinitialiser tout le tournoi" a été retiré volontairement.
+  // Raison : ADMIN_CODE est lisible dans le source par n'importe quel joueur.
+  // Le RLS interdit le DELETE mais pas l'écrasement par upsert — la protection
+  // serveur ne couvrait donc pas ce cas. Bénéfice le jour J : nul (on ne
+  // réinitialise pas un tournoi en cours). Pour repartir de zéro avant le
+  // tournoi : vider la table depuis le dashboard Supabase (Table Editor).
+
+  $('#adminView').innerHTML = html;
+}
+
+async function resolveDispute(id, winnerSlot){
+  const m = await readMatch(id);
+  if(!m) return;
+  const useSub = m.subA && m.subB ? m.subA : (m.subA || m.subB);
+  m.status = 'termine';
+  m.winner = winnerSlot;
+  m.orga = {
+    scoreA: useSub ? useSub.scoreA : 0,
+    scoreB: useSub ? useSub.scoreB : 0,
+    t: new Date().toLocaleTimeString('fr-FR')
+  };
+  await writeMatch(id, m);
+  await propagate(id, m);
+  matches[id] = m;
+  render();
+}
+
+async function saveTeams(){
+  const inputs = document.querySelectorAll('#teamEdits input');
+  const newTeams = Array.from(inputs).map((i,idx) => i.value.trim() || `Équipe ${idx+1}`);
+  try{
+    const pairs = [];
+    for(let i=0;i<16;i+=2) pairs.push([newTeams[i], newTeams[i+1]]);
+    const p1 = ['P1-1','P1-2','P1-3','P1-4','P1-5','P1-6','P1-7','P1-8'];
+
+    // On relit l'état frais des 8 matchs du 1er tour en une seule requête,
+    // au lieu de 8 lectures + 8 écritures séquentielles.
+    const all = await kvGetAll();
+    const entries = [[KEY_EQUIPES, newTeams]];
+    for(let i=0;i<p1.length;i++){
+      const m = all[KEY_MATCH_PREFIX+p1[i]];
+      // Garde-fou : on ne renomme QUE les matchs pas encore engagés.
+      // Renommer une équipe dont le match a déjà une saisie créerait une
+      // incohérence entre le nom affiché et le nom propagé au tour suivant.
+      if(m && m.status==='a_jouer' && !m.subA && !m.subB){
+        m.teamA = pairs[i][0]; m.teamB = pairs[i][1];
+        entries.push([KEY_MATCH_PREFIX+p1[i], m]);
+      }
+    }
+    await kvSetMany(entries);
+    equipes = newTeams;
+    await pollAll();
+    alert(`Équipes enregistrées (${entries.length - 1} match(s) mis à jour).`);
+  }catch(e){
+    console.error('[saveTeams]', e);
+    alert("Enregistrement impossible — vérifie le réseau et réessaie. Rien n'a été modifié.");
+  }
+}
+
+// ---------- Init ----------
+document.querySelectorAll('.tab').forEach(t=>{
+  t.addEventListener('click', ()=>{
+    document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
+    t.classList.add('active');
+    currentTab = t.dataset.tab;
+    render();
+  });
+});
+$('#refreshBtn').addEventListener('click', pollAll);
+$('#overlay').addEventListener('click', (e)=>{ if(e.target.id==='overlay') closeSheet(); });
+
+if(IS_ADMIN){
+  $('#modeLabel').textContent = 'Organisateur';
+  $('#adminView').style.display = 'block';
+}
+
+(async function init(){
+  // ensureInit() laisse volontairement remonter ses erreurs : un échec de lecture
+  // ne doit jamais être confondu avec une base vide (cf. commentaire d'ensureInit).
+  // On réessaie en boucle plutôt que de rester bloqué sur "connexion…" — c'était
+  // exactement le symptôme observé lors du premier déploiement.
+  let ok = false, dernierMotif = '';
+  for(let essai = 1; essai <= 3 && !ok; essai++){
+    try{
+      await ensureInit();
+      ok = true;
+    }catch(e){
+      dernierMotif = e.message || String(e);
+      setSync(false, `connexion impossible (essai ${essai}/3)`);
+      console.error('[init] échec de lecture Supabase :', e);
+      if(essai < 3) await new Promise(r => setTimeout(r, 1500));
+    }
+  }
+  if(!ok){
+    setSync(false, 'connexion impossible');
+    showFatal('Impossible de joindre la base de données.\n\nMotif : ' + dernierMotif
+      + '\n\nVérifie ta connexion et actualise la page. Si le message persiste, '
+      + 'montre-le à l\'organisateur.');
+  } else {
+    hideFatal();
+    render();
+    await pollAll();
+  }
+
+  // Le polling tourne dans tous les cas : si le réseau revient, l'app se rattrape
+  // toute seule sans que personne n'ait à recharger la page.
+  pollTimer = setInterval(()=>{
+    if(document.visibilityState === 'visible') pollAll();
+  }, 5000);
+})();
+</script>
+</body>
+</html>
