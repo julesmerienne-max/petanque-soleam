@@ -289,7 +289,7 @@
 
 <main>
   <div class="sync" id="syncBar">
-    <span><span class="dot">●</span> <span id="syncTxt">connexion…</span> <span style="color:#5a708c;">· v5</span></span>
+    <span><span class="dot">●</span> <span id="syncTxt">connexion…</span> <span style="color:#5a708c;">· v6</span></span>
     <button id="refreshBtn">Actualiser</button>
   </div>
 
@@ -706,6 +706,10 @@ async function submitScore(id){
     errEl.textContent = 'Renseigne les deux scores.';
     return;
   }
+  if(scoreA < 0 || scoreB < 0 || scoreA > 13 || scoreB > 13){
+    errEl.textContent = 'Un score de pétanque va de 0 à 13.';
+    return;
+  }
   let tie = null;
   if(scoreA === scoreB){
     const tieEl = $('#tieWinner');
@@ -713,36 +717,64 @@ async function submitScore(id){
     tie = tieEl.value;
   }
   errEl.textContent = '';
-  try{
-    const fresh = await readMatch(id);
-    if(!fresh){ errEl.textContent = 'Match introuvable, réessaie.'; return; }
-    const sub = {scoreA, scoreB, tie, dev:DEVICE, t:new Date().toLocaleTimeString('fr-FR')};
-    if(who==='A') fresh.subA = sub; else fresh.subB = sub;
 
-    if(fresh.subA && fresh.subB){
-      const match = fresh.subA.scoreA===fresh.subB.scoreA &&
-                    fresh.subA.scoreB===fresh.subB.scoreB &&
-                    fresh.subA.tie===fresh.subB.tie;
-      if(match){
-        fresh.status = 'termine';
-        // L'ancienne version comparait subA.scoreA à subB.scoreB : deux scores
-        // issus de deux saisies différentes. Ça ne donnait le bon résultat que
-        // parce qu'on est justement dans la branche où les deux saisies sont
-        // identiques. On compare désormais les deux scores d'une même saisie.
-        fresh.winner = fresh.subA.tie ? fresh.subA.tie : (fresh.subA.scoreA > fresh.subA.scoreB ? 'A' : 'B');
-        await writeMatch(id, fresh);
-        await propagate(id, fresh);
-      } else {
-        fresh.status = 'litige';
-        await writeMatch(id, fresh);
+  // CORRECTION SIMULTANÉITÉ.
+  // Le cycle lire -> modifier -> écrire n'est pas atomique : si les deux équipes
+  // valident dans la même seconde, chacune lit un état où l'autre n'a pas encore
+  // écrit, et la seconde écriture écrase la première. Les deux équipes croient
+  // avoir saisi, le match reste bloqué en "1 saisie reçue".
+  // Parade : après écriture, on relit et on vérifie que NOTRE saisie est bien là.
+  // Si elle a été écrasée, on recommence le cycle avec l'état frais.
+  const sub = {scoreA, scoreB, tie, dev:DEVICE, t:new Date().toLocaleTimeString('fr-FR')};
+  const champ = (who === 'A') ? 'subA' : 'subB';
+
+  try{
+    let ok = false;
+    for(let tentative = 1; tentative <= 4 && !ok; tentative++){
+      const fresh = await readMatch(id);
+      if(!fresh){ errEl.textContent = 'Match introuvable, réessaie.'; return; }
+      if(fresh.status === 'termine'){
+        errEl.textContent = 'Ce match a déjà été validé. Vois avec l\'organisateur.';
+        await pollAll(); return;
       }
-    } else {
+
+      fresh[champ] = sub;
+
+      if(fresh.subA && fresh.subB){
+        const concordent = fresh.subA.scoreA===fresh.subB.scoreA &&
+                           fresh.subA.scoreB===fresh.subB.scoreB &&
+                           fresh.subA.tie===fresh.subB.tie;
+        if(concordent){
+          fresh.status = 'termine';
+          fresh.winner = fresh.subA.tie ? fresh.subA.tie
+                       : (fresh.subA.scoreA > fresh.subA.scoreB ? 'A' : 'B');
+        } else {
+          fresh.status = 'litige';
+        }
+      }
       await writeMatch(id, fresh);
+
+      // Relecture de contrôle : notre saisie a-t-elle survécu ?
+      const verif = await readMatch(id);
+      if(verif && verif[champ] && verif[champ].dev === DEVICE
+         && verif[champ].scoreA === scoreA && verif[champ].scoreB === scoreB){
+        ok = true;
+        // La propagation n'est déclenchée QU'APRÈS confirmation que l'écriture
+        // a tenu, sinon on pourrait propager un résultat qui vient d'être écrasé.
+        if(verif.status === 'termine' && verif.winner) await propagate(id, verif);
+        matches[id] = verif;
+      } else {
+        await new Promise(r => setTimeout(r, 250 + Math.random()*350));
+      }
     }
-    matches[id] = fresh;
+    if(!ok){
+      errEl.textContent = 'Saisie non enregistrée après plusieurs essais. Réessaie dans quelques secondes.';
+      return;
+    }
     closeSheet();
     render();
   }catch(e){
+    console.error('[submitScore]', e);
     errEl.textContent = 'Écriture impossible, réessaie.';
   }
 }
@@ -773,6 +805,87 @@ async function propagate(id, resolved){
 function closeSheet(){ $('#overlay').classList.remove('open'); }
 
 // ---------- Admin ----------
+// ---------- Retour en arrière (organisateur uniquement) ----------
+//
+// Pourquoi une CASCADE et pas une simple annulation du match ciblé :
+// quand un match se termine, son vainqueur est recopié dans le match suivant et
+// son perdant dans la consolante. Annuler le match sans défaire ces recopies
+// laisserait une équipe qualifiée pour un tour qu'elle n'a pas gagné — un tableau
+// incohérent, impossible à rattraper en pleine journée.
+// On remet donc à zéro le match ciblé ET tout ce qui en découle.
+
+function etatVierge(m){
+  m.subA = null; m.subB = null; m.winner = null; m.orga = null;
+  m.status = (m.teamA && m.teamB) ? 'a_jouer' : 'attente';
+  return m;
+}
+
+// Construit la liste des écritures nécessaires pour annuler `id` et sa descendance.
+function collecterAnnulation(id, all, acc, slotAEffacer){
+  const cle = KEY_MATCH_PREFIX + id;
+  const m = all[cle];
+  if(!m) return acc;
+  // Un match n'est traité qu'une fois : les branches principal et consolante
+  // ne se rejoignent jamais, mais la garde évite un doublon dans l'upsert
+  // (PostgreSQL refuse deux fois la même clé dans un seul lot).
+  if(acc.vus.has(id)) return acc;
+  acc.vus.add(id);
+
+  // Pour les matchs en aval, on retire l'équipe qui venait du match annulé.
+  if(slotAEffacer) m[slotAEffacer === 'A' ? 'teamA' : 'teamB'] = null;
+  etatVierge(m);
+  acc.entries.push([cle, m]);
+
+  const topo = TOPOLOGY[id];
+  if(topo.feedsTo)    collecterAnnulation(topo.feedsTo.m, all, acc, topo.feedsTo.slot);
+  if(topo.feedsConso) collecterAnnulation(topo.feedsConso.m, all, acc, topo.feedsConso.slot);
+  return acc;
+}
+
+async function annulerMatch(id){
+  if(!IS_ADMIN) return;
+  const m = matches[id];
+  if(!m) return;
+
+  // On annonce précisément ce qui va être effacé avant de demander confirmation.
+  const all = await kvGetAll();
+  const acc = collecterAnnulation(id, all, {entries:[], vus:new Set()}, null);
+  const enAval = acc.entries.length - 1;
+  const txt = `Annuler ${m.teamA || '?'} vs ${m.teamB || '?'} ?\n\n`
+    + `Le score sera effacé et le match repassera « à jouer ».`
+    + (enAval > 0 ? `\n\n${enAval} match(s) en aval seront également remis à zéro `
+                    + `(le vainqueur sera retiré du tour suivant, le perdant de la consolante).` : '');
+  if(!confirm(txt)) return;
+
+  try{
+    await kvSetMany(acc.entries);
+    await pollAll();
+  }catch(e){
+    console.error('[annulerMatch]', e);
+    alert("Annulation impossible — vérifie le réseau. Rien n'a été modifié.");
+  }
+}
+
+async function toutReinitialiser(){
+  if(!IS_ADMIN) return;
+  // Double barrière : le mot doit être tapé, pas juste un clic sur OK.
+  // Un clic se fait par réflexe, taper un mot demande une intention.
+  const saisi = prompt(
+    "RÉINITIALISATION COMPLÈTE\n\n"
+    + "Les 22 matchs repassent à zéro. Les noms d'équipe sont conservés.\n"
+    + "Aucun score ne sera récupérable.\n\n"
+    + "Tape REINITIALISER en majuscules pour confirmer :");
+  if(saisi !== 'REINITIALISER') return;
+  try{
+    await seedMatches(equipes);   // réécrit les 22 matchs + les équipes en 1 requête
+    await pollAll();
+    alert('Tournoi remis à zéro. Les noms d\'équipe sont conservés.');
+  }catch(e){
+    console.error('[toutReinitialiser]', e);
+    alert("Réinitialisation impossible — vérifie le réseau. Rien n'a été modifié.");
+  }
+}
+
 function renderAdmin(){
   const litigeIds = ALL_MATCH_IDS.filter(id => matches[id] && matches[id].status==='litige');
   let html = `<div class="admin-banner">Mode organisateur — cette vue n'est pas destinée aux équipes</div>`;
@@ -795,18 +908,48 @@ function renderAdmin(){
   }
   html += `</div>`;
 
+  // Matchs annulables : tous ceux qui portent au moins une saisie.
+  const annulables = ALL_MATCH_IDS.filter(id => {
+    const m = matches[id];
+    return m && (m.subA || m.subB || m.status === 'termine' || m.status === 'litige');
+  });
+  html += `<div class="admin-section"><h3>Annuler un match (${annulables.length})</h3>`;
+  if(!annulables.length){
+    html += `<div class="empty">Aucun match saisi pour l'instant.</div>`;
+  } else {
+    html += `<div class="empty" style="margin-bottom:10px;">Remet le match à zéro, ainsi que les tours qui en découlent.</div>`;
+    for(const id of annulables){
+      const m = matches[id];
+      const s = m.orga || m.subA || m.subB;
+      const score = (m.status==='termine' && s) ? `${s.scoreA} – ${s.scoreB}`
+                  : (m.status==='litige' ? 'litige' : 'en cours');
+      html += `<div class="team-edit-row" style="gap:10px;">
+        <span style="flex:1;min-width:0;font-size:13px;">${esc(m.teamA)} vs ${esc(m.teamB)}
+          <span style="color:var(--text-faint);"> · ${score}</span></span>
+        <button onclick="annulerMatch('${id}')"
+          style="background:transparent;border:1px solid var(--rouille);color:var(--rouille);
+                 border-radius:7px;padding:6px 11px;font-size:12px;font-weight:600;cursor:pointer;">
+          Annuler</button>
+      </div>`;
+    }
+  }
+  html += `</div>`;
+
   html += `<div class="admin-section"><h3>Équipes (avant démarrage)</h3><div id="teamEdits">`;
   equipes.forEach((name,i)=>{
     html += `<div class="team-edit-row"><span>${i+1}.</span><input type="text" value="${esc(name)}" data-idx="${i}"></div>`;
   });
   html += `</div><div class="save-row"><button class="primary" onclick="saveTeams()">Enregistrer les équipes</button></div></div>`;
 
-  // Le bouton "Réinitialiser tout le tournoi" a été retiré volontairement.
-  // Raison : ADMIN_CODE est lisible dans le source par n'importe quel joueur.
-  // Le RLS interdit le DELETE mais pas l'écrasement par upsert — la protection
-  // serveur ne couvrait donc pas ce cas. Bénéfice le jour J : nul (on ne
-  // réinitialise pas un tournoi en cours). Pour repartir de zéro avant le
-  // tournoi : vider la table depuis le dashboard Supabase (Table Editor).
+  // Réinitialisation globale : réservée à la fin de la démonstration.
+  // Réintroduite sur demande, mais protégée par un mot à taper — et toujours
+  // inaccessible hors mode organisateur, IS_ADMIN étant vérifié côté fonction.
+  html += `<div class="admin-section"><h3>Fin de démonstration</h3>
+    <div class="empty" style="margin-bottom:10px;">Efface les scores des 22 matchs et conserve les noms d'équipe.</div>
+    <button onclick="toutReinitialiser()"
+      style="background:var(--rouille);color:#fff;border:none;border-radius:9px;
+             padding:12px 18px;font-size:14px;font-weight:700;cursor:pointer;width:100%;">
+      Tout réinitialiser</button></div>`;
 
   $('#adminView').innerHTML = html;
 }
@@ -831,6 +974,25 @@ async function resolveDispute(id, winnerSlot){
 async function saveTeams(){
   const inputs = document.querySelectorAll('#teamEdits input');
   const newTeams = Array.from(inputs).map((i,idx) => i.value.trim() || `Équipe ${idx+1}`);
+
+  // Contrôle d'unicité. La propagation recopie le NOM du vainqueur dans le match
+  // suivant : deux équipes homonymes rendraient le tableau illisible et on ne
+  // saurait plus laquelle est qualifiée. Comparaison insensible à la casse et
+  // aux accents, parce que "Les Boulistes" et "les boulistes" poseraient le
+  // même problème à l'écran.
+  const norm = s => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\s+/g,' ').trim();
+  const vus = new Map();
+  for(let i=0;i<newTeams.length;i++){
+    const k = norm(newTeams[i]);
+    if(vus.has(k)){
+      alert(`Deux équipes portent le même nom :\n\n`
+        + `n°${vus.get(k)+1} et n°${i+1} — « ${newTeams[i]} »\n\n`
+        + `Rends-les distincts avant d'enregistrer : le tableau identifie les équipes par leur nom.`);
+      return;
+    }
+    vus.set(k, i);
+  }
+
   try{
     const pairs = [];
     for(let i=0;i<16;i+=2) pairs.push([newTeams[i], newTeams[i+1]]);
@@ -840,6 +1002,7 @@ async function saveTeams(){
     // au lieu de 8 lectures + 8 écritures séquentielles.
     const all = await kvGetAll();
     const entries = [[KEY_EQUIPES, newTeams]];
+    let bloques = 0;
     for(let i=0;i<p1.length;i++){
       const m = all[KEY_MATCH_PREFIX+p1[i]];
       // Garde-fou : on ne renomme QUE les matchs pas encore engagés.
@@ -848,12 +1011,17 @@ async function saveTeams(){
       if(m && m.status==='a_jouer' && !m.subA && !m.subB){
         m.teamA = pairs[i][0]; m.teamB = pairs[i][1];
         entries.push([KEY_MATCH_PREFIX+p1[i], m]);
-      }
+      } else if(m) bloques++;
     }
     await kvSetMany(entries);
     equipes = newTeams;
     await pollAll();
-    alert(`Équipes enregistrées (${entries.length - 1} match(s) mis à jour).`);
+    let msg = `Équipes enregistrées (${entries.length - 1} match(s) du 1er tour mis à jour).`;
+    if(bloques > 0){
+      msg += `\n\n⚠ ${bloques} match(s) du 1er tour sont déjà engagés : ils gardent les anciens noms.`
+           + `\nPour les renommer, annule-les d'abord depuis « Annuler un match ».`;
+    }
+    alert(msg);
   }catch(e){
     console.error('[saveTeams]', e);
     alert("Enregistrement impossible — vérifie le réseau et réessaie. Rien n'a été modifié.");
