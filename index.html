@@ -297,7 +297,7 @@
 
 <main>
   <div class="sync" id="syncBar">
-    <span><span class="dot">●</span> <span id="syncTxt">connexion…</span> <span style="color:#5a708c;">· v9</span></span>
+    <span><span class="dot">●</span> <span id="syncTxt">connexion…</span> <span style="color:#5a708c;">· v10</span></span>
     <button id="refreshBtn">Actualiser</button>
   </div>
 
@@ -402,8 +402,10 @@ const KEY_TERRAINS = 'petanque-terrains';
 // ou gagnent restent 16 équipes au tour suivant tant que la consolante tourne.
 //   Vague 1 : 8 huitièmes                       -> T1 à T8
 //   Vague 2 : 4 quarts + 4 consolante           -> T1 à T8
-//   Vague 3 : 2 demies + 2 consolante           -> T1 à T4
-//   Vague 4 : finale + finale consolante        -> T1 et T2
+//   Vague 3 : 2 demi-finales                    -> T1 et T2
+//   Vague 4 : finale                            -> T1
+// La consolante s'arrête après la vague 2 : chaque perdant du 1er tour n'y joue
+// qu'un seul match, et un classement départage les 8 équipes.
 // Valeurs par défaut seulement : l'organisateur peut tout réaffecter, et son
 // choix est stocké en base pour que les 44 téléphones le voient aussitôt.
 const TERRAINS_DEFAUT = {
@@ -411,9 +413,7 @@ const TERRAINS_DEFAUT = {
   'P2-1':1,'P2-2':2,'P2-3':3,'P2-4':4,
   'C1-1':5,'C1-2':6,'C1-3':7,'C1-4':8,
   'P3-1':1,'P3-2':2,
-  'C2-1':3,'C2-2':4,
-  'P4-1':1,
-  'C3-1':2
+  'P4-1':1
 };
 let terrains = Object.assign({}, TERRAINS_DEFAUT);
 
@@ -486,21 +486,19 @@ const TOPOLOGY = {
 
   'P4-1':{round:4,bracket:'principal',feedsTo:null},
 
-  'C1-1':{round:1,bracket:'consolante',feedsTo:{m:'C2-1',slot:'A'}},
-  'C1-2':{round:1,bracket:'consolante',feedsTo:{m:'C2-1',slot:'B'}},
-  'C1-3':{round:1,bracket:'consolante',feedsTo:{m:'C2-2',slot:'A'}},
-  'C1-4':{round:1,bracket:'consolante',feedsTo:{m:'C2-2',slot:'B'}},
-
-  'C2-1':{round:2,bracket:'consolante',feedsTo:{m:'C3-1',slot:'A'}},
-  'C2-2':{round:2,bracket:'consolante',feedsTo:{m:'C3-1',slot:'B'}},
-
-  'C3-1':{round:3,bracket:'consolante',feedsTo:null},
+  // Consolante : 4 matchs UNIQUES, pas un tableau.
+  // Chaque perdant du 1er tour joue exactement une partie, puis un classement
+  // départage les 8 équipes. feedsTo est donc null partout : rien ne se propage.
+  'C1-1':{round:1,bracket:'consolante',feedsTo:null},
+  'C1-2':{round:1,bracket:'consolante',feedsTo:null},
+  'C1-3':{round:1,bracket:'consolante',feedsTo:null},
+  'C1-4':{round:1,bracket:'consolante',feedsTo:null},
 };
 const ROUND_LABELS = {
   // 16 équipes = 8 matchs au premier tour = 8es de finale.
   // Les 16es supposeraient 32 équipes.
   principal:{1:'8es de finale',2:'Quarts de finale',3:'Demi-finales',4:'Finale'},
-  consolante:{1:'1er tour consolante',2:'Demi-finale consolante',3:'Finale consolante'}
+  consolante:{1:'Matchs de consolante'}
 };
 const ALL_MATCH_IDS = Object.keys(TOPOLOGY);
 
@@ -548,9 +546,18 @@ async function ensureInit(){
   await seedMatches(equipes);
 }
 
-async function seedMatches(eq){
+// Appariements du 1er tour : 1 contre 16, 2 contre 15, 3 contre 14...
+// Une seule définition, réutilisée par seedMatches ET saveTeams — pour que
+// renommer les équipes ne puisse jamais produire un appariement différent
+// de celui du tirage initial.
+function appariements(eq){
   const pairs = [];
-  for(let i=0;i<16;i+=2) pairs.push([eq[i], eq[i+1]]);
+  for(let i=0;i<8;i++) pairs.push([eq[i], eq[15-i]]);
+  return pairs;
+}
+
+async function seedMatches(eq){
+  const pairs = appariements(eq);
   const seeds = {
     'P1-1':pairs[0],'P1-2':pairs[1],'P1-3':pairs[2],'P1-4':pairs[3],
     'P1-5':pairs[4],'P1-6':pairs[5],'P1-7':pairs[6],'P1-8':pairs[7],
@@ -680,7 +687,7 @@ function render(){
 }
 
 function renderPublic(){
-  const rounds = currentTab === 'principal' ? [1,2,3,4] : [1,2,3];
+  const rounds = currentTab === 'principal' ? [1,2,3,4] : [1];
   let html = '';
   for(const r of rounds){
     const ids = ALL_MATCH_IDS.filter(id => TOPOLOGY[id].bracket===currentTab && TOPOLOGY[id].round===r);
@@ -695,6 +702,9 @@ function renderPublic(){
     }
     html += '</div>';
   }
+  // Le classement n'a de sens que dans la consolante : c'est son résultat final,
+  // puisqu'il n'y a plus de tour suivant vers lequel se propager.
+  if(currentTab === 'consolante') html += renderClassement();
   $('#publicView').innerHTML = html;
 }
 
@@ -1024,7 +1034,113 @@ async function toutReinitialiser(){
   }
 }
 
+// Classement de la consolante.
+// Règle retenue : victoire d'abord, puis points marqués.
+// C'est le classement le plus intuitif à annoncer au micro — on ne se retrouve
+// jamais à expliquer qu'une équipe battue 13-12 devance une équipe qui a gagné.
+// Départage en cascade : victoire > points marqués > points encaissés (le moins
+// possible) > ordre alphabétique, pour qu'aucune égalité ne reste non tranchée.
+function classementConsolante(){
+  const lignes = [];
+  for(const id of ALL_MATCH_IDS){
+    if(TOPOLOGY[id].bracket !== 'consolante') continue;
+    const m = matches[id];
+    if(!m || !m.teamA || !m.teamB) continue;
+    const src = m.orga || (m.subA && m.subB ? m.subA : (m.subA || m.subB));
+    // Le double ! force un vrai booléen. Sans lui, `joue` valait l'OBJET score,
+    // et le tri comparait deux références d'objets distinctes — donc toujours
+    // "différentes" — ce qui court-circuitait tous les critères suivants.
+    const joue = !!(m.status === 'termine' && src);
+    for(const cote of ['A','B']){
+      const nom = cote === 'A' ? m.teamA : m.teamB;
+      lignes.push({
+        nom,
+        joue,
+        victoire: joue && m.winner === cote ? 1 : 0,
+        marques:  joue ? (cote === 'A' ? src.scoreA : src.scoreB) : null,
+        encaisses:joue ? (cote === 'A' ? src.scoreB : src.scoreA) : null,
+        match: id
+      });
+    }
+  }
+  // Les équipes dont le match n'est pas terminé sont rejetées en fin de
+  // classement : les afficher avec 0 point laisserait croire à une défaite.
+  lignes.sort((a,b) => {
+    if(a.joue !== b.joue) return a.joue ? -1 : 1;
+    if(!a.joue) return a.nom.localeCompare(b.nom,'fr');
+    if(b.victoire !== a.victoire) return b.victoire - a.victoire;
+    if(b.marques  !== a.marques)  return b.marques - a.marques;
+    if(a.encaisses!== b.encaisses)return a.encaisses - b.encaisses;
+    return a.nom.localeCompare(b.nom,'fr');
+  });
+  return lignes;
+}
+
+function renderClassement(){
+  const l = classementConsolante();
+  if(!l.length) return '';
+  const joues = l.filter(x => x.joue).length;
+  let html = `<div class="round-title">Classement · ${joues}/${l.length} équipes classées</div>
+    <div class="matches-col" style="padding:4px 0;">`;
+  l.forEach((x, i) => {
+    const rang = x.joue ? `${i+1}` : '–';
+    const detail = x.joue
+      ? `<span style="color:${x.victoire?'#7bc491':'var(--text-faint)'};font-size:11.5px;">${x.victoire?'V':'D'}</span>
+         <span style="font-variant-numeric:tabular-nums;font-weight:700;color:var(--sable-soft);min-width:26px;text-align:right;">${x.marques}</span>
+         <span style="color:var(--text-faint);font-size:11.5px;font-variant-numeric:tabular-nums;">/ ${x.encaisses}</span>`
+      : `<span style="color:var(--text-faint);font-size:11.5px;">match en cours</span>`;
+    html += `<div style="display:flex;align-items:center;gap:10px;padding:10px 13px;
+        border-top:${i?'1px solid rgba(58,87,124,0.55)':'none'};
+        ${i===0 && x.joue ? 'background:rgba(249,194,77,0.07);' : ''}">
+      <span style="flex:0 0 22px;color:${i===0&&x.joue?'var(--sable-soft)':'var(--text-faint)'};
+        font-weight:700;font-variant-numeric:tabular-nums;">${rang}</span>
+      <span style="flex:1;min-width:0;font-size:13.5px;${i===0&&x.joue?'font-weight:700;color:var(--sable-soft);':''}">${esc(x.nom)}</span>
+      ${detail}
+    </div>`;
+  });
+  html += `</div><div class="empty" style="margin-top:8px;font-size:11.5px;">
+    Victoire d'abord, puis points marqués. La colonne de droite indique points marqués / encaissés.</div>`;
+  return html;
+}
+
+// CORRECTION DU BUG DE SAISIE DES NOMS D'ÉQUIPE.
+// renderAdmin reconstruit tout le HTML de la vue organisateur. Comme pollAll()
+// appelle render() toutes les 5 secondes, les champs étaient recréés à partir
+// des valeurs enregistrées en base : la saisie en cours était effacée et le nom
+// revenait à "Équipe N". On avait littéralement 5 secondes pour taper un nom.
+//
+// Parade : on relève les valeurs saisies et la position du curseur AVANT de
+// reconstruire, on les remet APRÈS. La reconstruction reste nécessaire (litiges,
+// terrains et incohérences doivent rester à jour), mais elle devient invisible
+// pour qui est en train de taper.
+function releverSaisies(){
+  const etat = {valeurs:{}, actif:null, debut:0, fin:0};
+  for(const i of document.querySelectorAll('#adminView input[data-idx], #adminView input[data-match]')){
+    const cle = (i.dataset.idx !== undefined) ? 'e'+i.dataset.idx : 't'+i.dataset.match;
+    etat.valeurs[cle] = i.value;
+    if(document.activeElement === i){
+      etat.actif = cle;
+      try{ etat.debut = i.selectionStart; etat.fin = i.selectionEnd; }catch(e){}
+    }
+  }
+  return etat;
+}
+
+function restaurerSaisies(etat){
+  for(const i of document.querySelectorAll('#adminView input[data-idx], #adminView input[data-match]')){
+    const cle = (i.dataset.idx !== undefined) ? 'e'+i.dataset.idx : 't'+i.dataset.match;
+    if(etat.valeurs[cle] !== undefined) i.value = etat.valeurs[cle];
+    if(etat.actif === cle){
+      i.focus();
+      // Le curseur est remis exactement où il était : sinon il saute en fin de
+      // champ à chaque rafraîchissement et corriger une lettre devient pénible.
+      try{ i.setSelectionRange(etat.debut, etat.fin); }catch(e){}
+    }
+  }
+}
+
 function renderAdmin(){
+  const saisiesEnCours = releverSaisies();
   // Deux situations demandent un arbitrage :
   //  - litige : les deux équipes ont saisi des résultats différents
   //  - bloqué : une seule équipe a saisi et l'autre ne peut pas (téléphone à
@@ -1059,12 +1175,35 @@ function renderAdmin(){
   } else {
     for(const id of litigeIds){
       const m = matches[id];
+      // Champs de score : l'organisateur saisit le résultat réel, pas seulement
+      // le vainqueur. Prérenseignés avec la saisie de l'équipe A pour éviter de
+      // tout retaper quand le désaccord ne porte que sur un point.
+      const pre = m.subA || m.subB || {scoreA:'', scoreB:''};
       html += `<div class="litige-card">
         <div style="font-weight:600;margin-bottom:8px;">${esc(m.teamA)} vs ${esc(m.teamB)}</div>
         ${renderSubmissionsView(m)}
-        <div class="btn-row" style="margin-top:10px;">
-          <button class="primary" style="flex:1" onclick="resolveDispute('${id}','A')">${esc(m.teamA)} gagne</button>
-          <button class="primary" style="flex:1;background:var(--text-dim);color:#0a1e2b" onclick="resolveDispute('${id}','B')">${esc(m.teamB)} gagne</button>
+        <div style="margin-top:12px;padding-top:12px;border-top:1px solid rgba(58,87,124,0.55);">
+          <div style="font-size:11.5px;color:var(--text-faint);margin-bottom:8px;">Score retenu :</div>
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+            <span style="flex:1;min-width:0;font-size:13px;">${esc(m.teamA)}</span>
+            <input type="number" id="arbA-${id}" min="0" max="13" value="${pre.scoreA}"
+              style="width:64px;flex:0 0 auto;text-align:center;">
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+            <span style="flex:1;min-width:0;font-size:13px;">${esc(m.teamB)}</span>
+            <input type="number" id="arbB-${id}" min="0" max="13" value="${pre.scoreB}"
+              style="width:64px;flex:0 0 auto;text-align:center;">
+          </div>
+          <div style="margin-bottom:10px;">
+            <div style="font-size:11.5px;color:var(--text-faint);margin-bottom:5px;">Si scores égaux, vainqueur :</div>
+            <select id="arbTie-${id}" style="width:100%;">
+              <option value="">— à préciser seulement en cas d'égalité —</option>
+              <option value="A">${esc(m.teamA)}</option>
+              <option value="B">${esc(m.teamB)}</option>
+            </select>
+          </div>
+          <button class="primary" style="width:100%;" onclick="arbitrerAvecScore('${id}')">Valider ce score</button>
+          <div id="arbErr-${id}" style="color:#e8956a;font-size:11.5px;margin-top:8px;"></div>
         </div>
       </div>`;
     }
@@ -1179,23 +1318,67 @@ function renderAdmin(){
       Tout réinitialiser</button></div>`;
 
   $('#adminView').innerHTML = html;
+  restaurerSaisies(saisiesEnCours);
 }
 
-async function resolveDispute(id, winnerSlot){
+// Arbitrage par l'organisateur.
+// scores facultatif : {scoreA, scoreB}. Quand il est fourni, c'est CE score qui
+// s'affiche dans le tableau — l'ancienne version reprenait systématiquement la
+// saisie de l'équipe A, si bien que trancher en faveur de B affichait quand même
+// le score de A. Le tableau montrait alors un vainqueur avec le score du perdant.
+async function resolveDispute(id, winnerSlot, scores){
+  if(!IS_ADMIN) return;
   const m = await readMatch(id);
   if(!m) return;
-  const useSub = m.subA && m.subB ? m.subA : (m.subA || m.subB);
+  let sA, sB;
+  if(scores){
+    sA = scores.scoreA; sB = scores.scoreB;
+  } else {
+    // Sans score explicite, on reprend celui de la saisie disponible.
+    const useSub = (m.subA && m.subB) ? m.subA : (m.subA || m.subB);
+    sA = useSub ? useSub.scoreA : 0;
+    sB = useSub ? useSub.scoreB : 0;
+  }
   m.status = 'termine';
   m.winner = winnerSlot;
-  m.orga = {
-    scoreA: useSub ? useSub.scoreA : 0,
-    scoreB: useSub ? useSub.scoreB : 0,
-    t: new Date().toLocaleTimeString('fr-FR')
-  };
+  m.orga = { scoreA: sA, scoreB: sB, t: new Date().toLocaleTimeString('fr-FR') };
   await writeMatch(id, m);
   await propagate(id, m);
   matches[id] = m;
   render();
+}
+
+// Lit les deux champs de score de la carte de litige, contrôle la cohérence,
+// puis tranche. Le vainqueur est DÉDUIT du score saisi quand les scores
+// diffèrent : on ne peut pas enregistrer "13-7 pour B", ce serait afficher un
+// résultat contredit par son propre score.
+async function arbitrerAvecScore(id){
+  if(!IS_ADMIN) return;
+  const eA = document.getElementById('arbA-'+id);
+  const eB = document.getElementById('arbB-'+id);
+  const err = document.getElementById('arbErr-'+id);
+  const sA = parseInt(eA.value), sB = parseInt(eB.value);
+  err.textContent = '';
+  if(isNaN(sA) || isNaN(sB)){ err.textContent = 'Renseigne les deux scores.'; return; }
+  if(sA < 0 || sB < 0 || sA > 13 || sB > 13){ err.textContent = 'Un score va de 0 à 13.'; return; }
+
+  let vainqueur;
+  if(sA !== sB){
+    vainqueur = sA > sB ? 'A' : 'B';
+  } else {
+    // Égalité possible en parties au temps : le vainqueur ne peut pas se
+    // déduire du score, il faut le désigner explicitement.
+    const sel = document.getElementById('arbTie-'+id);
+    if(!sel || !sel.value){ err.textContent = 'Scores égaux : indique qui a gagné.'; return; }
+    vainqueur = sel.value;
+  }
+  try{
+    await resolveDispute(id, vainqueur, {scoreA:sA, scoreB:sB});
+    await pollAll();
+  }catch(e){
+    console.error('[arbitrerAvecScore]', e);
+    err.textContent = 'Enregistrement impossible, réessaie.';
+  }
 }
 
 async function saveTerrains(){
@@ -1277,8 +1460,7 @@ async function saveTeams(){
   }
 
   try{
-    const pairs = [];
-    for(let i=0;i<16;i+=2) pairs.push([newTeams[i], newTeams[i+1]]);
+    const pairs = appariements(newTeams);
     const p1 = ['P1-1','P1-2','P1-3','P1-4','P1-5','P1-6','P1-7','P1-8'];
 
     // On relit l'état frais des 8 matchs du 1er tour en une seule requête,
