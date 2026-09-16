@@ -297,7 +297,7 @@
 
 <main>
   <div class="sync" id="syncBar">
-    <span><span class="dot">●</span> <span id="syncTxt">connexion…</span> <span style="color:#5a708c;">· v10</span></span>
+    <span><span class="dot">●</span> <span id="syncTxt">connexion…</span> <span style="color:#5a708c;">· v11</span></span>
     <button id="refreshBtn">Actualiser</button>
   </div>
 
@@ -593,10 +593,15 @@ function hydrate(all){
   }
 }
 
+// readMatch NE SWALLOW PLUS l'erreur. Avant, une panne réseau et un match
+// réellement absent étaient tous deux traduits par `null` — indiscernables
+// pour l'appelant, qui bailait immédiatement ("Match introuvable") au lieu de
+// réessayer. Or un match ne disparaît jamais (les 19 sont créés à l'init) :
+// ce "null" n'était donc, en pratique, presque toujours une panne réseau
+// maquillée en erreur définitive. Désormais l'exception remonte, et c'est
+// l'appelant qui décide s'il réessaie.
 async function readMatch(id){
-  try{
-    return await kvGet(KEY_MATCH_PREFIX+id);
-  }catch(e){ return null; }
+  return await kvGet(KEY_MATCH_PREFIX+id);
 }
 async function writeMatch(id, state){
   return kvSet(KEY_MATCH_PREFIX+id, state);
@@ -612,6 +617,10 @@ async function pollAll(){
     hideFatal();
     setSync(true, 'synchro OK — ' + new Date().toLocaleTimeString('fr-FR'));
     render();
+    // Le réseau vient de prouver qu'il répond : c'est le meilleur moment pour
+    // vider la file d'attente, pas la peine d'attendre l'événement 'online'
+    // du navigateur qui ne se déclenche pas toujours de façon fiable.
+    traiterFileAttente();
   }catch(e){
     // On signale la panne sans jamais toucher aux données locales ni distantes :
     // l'affichage reste sur le dernier état connu, la prochaine passe rattrapera.
@@ -772,6 +781,171 @@ function checkTie(m){
   }
 }
 
+// Tentative d'écriture d'un score, SANS AUCUN ACCÈS AU DOM.
+// Extraite de submitScore pour être appelable depuis deux endroits : la saisie
+// interactive (l'écran de saisie est ouvert), et le renvoi automatique en
+// arrière-plan (traiterFileAttente), qui peut s'exécuter alors que la personne
+// a fermé l'écran, verrouillé son téléphone, ou changé d'onglet.
+//
+// Retourne :
+//   {ok:true}                                  — écrit et vérifié
+//   {ok:false, definitif:true,  raison}         — inutile de réessayer (déjà
+//                                                 validé, ou même appareil des
+//                                                 deux côtés)
+//   {ok:false, definitif:false, raison}         — panne réseau persistante :
+//                                                 à retenter plus tard, jamais
+//                                                 à abandonner
+async function tenterEcritureScore(id, who, sub){
+  const champ = (who === 'A') ? 'subA' : 'subB';
+  for(let tentative = 1; tentative <= 4; tentative++){
+    let fresh;
+    try{
+      fresh = await readMatch(id);
+    }catch(e){
+      // Panne réseau à la lecture : ce n'est PAS "match introuvable" (les 19
+      // matchs existent toujours, seedés à l'init). On retente.
+      await new Promise(r => setTimeout(r, 250 + Math.random()*350));
+      continue;
+    }
+    if(!fresh) return {ok:false, definitif:true, raison:'Match introuvable.'};
+    if(fresh.status === 'termine'){
+      return {ok:false, definitif:true, raison:'Ce match a déjà été validé. Vois avec l\'organisateur.'};
+    }
+
+    // La double confirmation n'a de sens que si les deux saisies viennent de
+    // deux téléphones différents. Sans ce contrôle, une personne saisit pour
+    // son équipe, rouvre le match, saisit pour l'adversaire, et valide seule —
+    // le désaccord ne peut alors jamais se déclencher.
+    // L'organisateur est exempté : il doit pouvoir dérouler sa démonstration
+    // depuis un seul appareil.
+    const autre = (who === 'A') ? 'subB' : 'subA';
+    if(!IS_ADMIN && fresh[autre] && fresh[autre].dev === DEVICE){
+      return {ok:false, definitif:true,
+        raison:"Cet appareil a déjà saisi pour l'autre équipe. La seconde saisie doit "
+             + "venir du téléphone de l'équipe adverse. Si elle ne peut pas saisir, "
+             + "l'organisateur peut valider le match."};
+    }
+
+    fresh[champ] = sub;
+    if(fresh.subA && fresh.subB){
+      const concordent = fresh.subA.scoreA===fresh.subB.scoreA &&
+                         fresh.subA.scoreB===fresh.subB.scoreB &&
+                         fresh.subA.tie===fresh.subB.tie;
+      if(concordent){
+        fresh.status = 'termine';
+        fresh.winner = fresh.subA.tie ? fresh.subA.tie
+                     : (fresh.subA.scoreA > fresh.subA.scoreB ? 'A' : 'B');
+      } else {
+        fresh.status = 'litige';
+      }
+    }
+
+    try{
+      await writeMatch(id, fresh);
+    }catch(e){
+      await new Promise(r => setTimeout(r, 250 + Math.random()*350));
+      continue;
+    }
+
+    let verif;
+    try{ verif = await readMatch(id); }catch(e){ verif = null; }
+    if(verif && verif[champ] && verif[champ].dev === DEVICE
+       && verif[champ].scoreA === sub.scoreA && verif[champ].scoreB === sub.scoreB){
+      if(verif.status === 'termine' && verif.winner) await propagate(id, verif);
+      matches[id] = verif;
+      return {ok:true};
+    }
+    await new Promise(r => setTimeout(r, 250 + Math.random()*350));
+  }
+  return {ok:false, definitif:false, raison:'Réseau trop instable pour confirmer l\'envoi.'};
+}
+
+// ---------- File d'attente locale ----------
+// Filet de sécurité pour une coupure PROLONGÉE (au-delà des 4 tentatives déjà
+// intégrées à tenterEcritureScore, qui couvrent les accrocs de quelques
+// secondes). Si le réseau manque plusieurs minutes, la saisie n'est jamais
+// perdue : elle est gardée sur CE téléphone et renvoyée automatiquement dès
+// que la connexion revient — même si la personne a fermé l'écran entre-temps.
+//
+// Ce n'est pas un mode hors-ligne : le tableau affiché reste celui de la
+// dernière synchro réussie, jamais un état reconstitué localement. Seule la
+// saisie sortante est mise en attente, jamais la lecture.
+const CLE_FILE = 'petanque-file-attente';
+
+function litFile(){
+  try{ return JSON.parse(localStorage.getItem(CLE_FILE) || '[]'); }
+  catch(e){ return []; }
+}
+function ecritFile(file){
+  try{ localStorage.setItem(CLE_FILE, JSON.stringify(file)); }catch(e){ /* stockage indisponible : tant pis, pas de file */ }
+}
+
+// Une seule entrée par match+équipe : une nouvelle saisie remplace l'ancienne
+// plutôt que de s'empiler à côté (la personne a pu corriger un score avant que
+// le premier envoi n'ait eu le temps de partir).
+function enqueueSaisie(id, who, sub){
+  const file = litFile().filter(e => !(e.id === id && e.who === who));
+  file.push({id, who, sub, ajoute: Date.now()});
+  ecritFile(file);
+  majBandeauFile();
+}
+
+function retirerDeFile(id, who){
+  ecritFile(litFile().filter(e => !(e.id === id && e.who === who)));
+  majBandeauFile();
+}
+
+let traitementEnCours = false;
+async function traiterFileAttente(){
+  if(traitementEnCours) return;   // jamais deux vidages en parallèle
+  const file = litFile();
+  if(!file.length) return;
+  traitementEnCours = true;
+  try{
+    for(const entree of file){
+      const r = await tenterEcritureScore(entree.id, entree.who, entree.sub);
+      if(r.ok){
+        retirerDeFile(entree.id, entree.who);
+      } else if(r.definitif){
+        // Le match a changé de statut entre-temps (déjà validé, ou conflit
+        // d'appareil) : renvoyer indéfiniment n'aboutirait jamais. On retire
+        // de la file et on prévient — la personne doit rouvrir le match.
+        retirerDeFile(entree.id, entree.who);
+        alert(`Une saisie en attente n'a pas pu être envoyée : ${r.raison}\n\nVérifie ce match.`);
+      }
+      // Sinon (échec non définitif) : reste en file, prochain passage.
+    }
+    render();
+  } finally {
+    traitementEnCours = false;
+  }
+}
+
+function majBandeauFile(){
+  const n = litFile().length;
+  let el = document.getElementById('bandeauFile');
+  if(n === 0){ if(el) el.remove(); return; }
+  if(!el){
+    el = document.createElement('div');
+    el.id = 'bandeauFile';
+    el.style.cssText = 'position:sticky;top:0;z-index:25;background:#d9a54a;color:#20140a;'
+      + 'font-size:12.5px;font-weight:600;padding:9px 14px;text-align:center;'
+      + 'display:flex;align-items:center;justify-content:center;gap:10px;flex-wrap:wrap;';
+    document.body.prepend(el);
+  }
+  el.innerHTML = `⏳ ${n} saisie${n>1?'s':''} en attente d'envoi — réessai automatique`
+    + `<button onclick="traiterFileAttente()" style="background:#20140a;color:#f9c24d;border:none;`
+    + `border-radius:6px;padding:4px 10px;font-size:11.5px;font-weight:700;cursor:pointer;">Réessayer maintenant</button>`;
+}
+
+// Renvoi automatique : dès que le navigateur détecte une reconnexion, dès
+// qu'on revient sur l'onglet, et à chaque cycle de synchro (toutes les 5 s) —
+// pour ne jamais dépendre d'un geste de la personne pour récupérer sa saisie.
+window.addEventListener('online', traiterFileAttente);
+document.addEventListener('visibilitychange', () => {
+  if(document.visibilityState === 'visible') traiterFileAttente();
+});
+
 async function submitScore(id){
   const who = $('#whoAmI').value;
   const scoreA = parseInt($('#scoreA').value);
@@ -792,82 +966,35 @@ async function submitScore(id){
     tie = tieEl.value;
   }
   errEl.textContent = '';
-
-  // CORRECTION SIMULTANÉITÉ.
-  // Le cycle lire -> modifier -> écrire n'est pas atomique : si les deux équipes
-  // valident dans la même seconde, chacune lit un état où l'autre n'a pas encore
-  // écrit, et la seconde écriture écrase la première. Les deux équipes croient
-  // avoir saisi, le match reste bloqué en "1 saisie reçue".
-  // Parade : après écriture, on relit et on vérifie que NOTRE saisie est bien là.
-  // Si elle a été écrasée, on recommence le cycle avec l'état frais.
   const sub = {scoreA, scoreB, tie, dev:DEVICE, t:new Date().toLocaleTimeString('fr-FR')};
-  const champ = (who === 'A') ? 'subA' : 'subB';
 
+  let r;
   try{
-    let ok = false;
-    for(let tentative = 1; tentative <= 4 && !ok; tentative++){
-      const fresh = await readMatch(id);
-      if(!fresh){ errEl.textContent = 'Match introuvable, réessaie.'; return; }
-      if(fresh.status === 'termine'){
-        errEl.textContent = 'Ce match a déjà été validé. Vois avec l\'organisateur.';
-        await pollAll(); return;
-      }
+    r = await tenterEcritureScore(id, who, sub);
+  }catch(e){
+    // Exception non anticipée (ex. coupure totale au tout premier appel) :
+    // traitée exactement comme un échec non définitif, jamais comme un échec
+    // sec qui obligerait à tout retaper.
+    console.error('[submitScore]', e);
+    r = {ok:false, definitif:false, raison:'Réseau indisponible.'};
+  }
 
-      // La double confirmation n'a de sens que si les deux saisies viennent de
-      // deux téléphones différents. Sans ce contrôle, une personne saisit pour
-      // son équipe, rouvre le match, saisit pour l'adversaire, et valide seule —
-      // le désaccord ne peut alors jamais se déclencher.
-      // Le cas visé n'est pas la triche mais l'arrangement de bonne foi
-      // ("l'autre équipe est partie, je saisis pour eux").
-      // L'organisateur est exempté : il doit pouvoir dérouler sa démonstration
-      // depuis un seul appareil.
-      const autre = (who === 'A') ? 'subB' : 'subA';
-      if(!IS_ADMIN && fresh[autre] && fresh[autre].dev === DEVICE){
-        errEl.textContent = "Cet appareil a déjà saisi pour l'autre équipe. "
-          + "La seconde saisie doit venir du téléphone de l'équipe adverse. "
-          + "Si elle ne peut pas saisir, l'organisateur peut valider le match.";
-        return;
-      }
-
-      fresh[champ] = sub;
-
-      if(fresh.subA && fresh.subB){
-        const concordent = fresh.subA.scoreA===fresh.subB.scoreA &&
-                           fresh.subA.scoreB===fresh.subB.scoreB &&
-                           fresh.subA.tie===fresh.subB.tie;
-        if(concordent){
-          fresh.status = 'termine';
-          fresh.winner = fresh.subA.tie ? fresh.subA.tie
-                       : (fresh.subA.scoreA > fresh.subA.scoreB ? 'A' : 'B');
-        } else {
-          fresh.status = 'litige';
-        }
-      }
-      await writeMatch(id, fresh);
-
-      // Relecture de contrôle : notre saisie a-t-elle survécu ?
-      const verif = await readMatch(id);
-      if(verif && verif[champ] && verif[champ].dev === DEVICE
-         && verif[champ].scoreA === scoreA && verif[champ].scoreB === scoreB){
-        ok = true;
-        // La propagation n'est déclenchée QU'APRÈS confirmation que l'écriture
-        // a tenu, sinon on pourrait propager un résultat qui vient d'être écrasé.
-        if(verif.status === 'termine' && verif.winner) await propagate(id, verif);
-        matches[id] = verif;
-      } else {
-        await new Promise(r => setTimeout(r, 250 + Math.random()*350));
-      }
-    }
-    if(!ok){
-      errEl.textContent = 'Saisie non enregistrée après plusieurs essais. Réessaie dans quelques secondes.';
-      return;
-    }
+  if(r.ok){
     closeSheet();
     render();
-  }catch(e){
-    console.error('[submitScore]', e);
-    errEl.textContent = 'Écriture impossible, réessaie.';
+    return;
   }
+  if(r.definitif){
+    errEl.textContent = r.raison;
+    if(r.raison.includes('déjà été validé')) await pollAll();
+    return;
+  }
+  // Échec non définitif après 4 tentatives rapides : plutôt que de laisser la
+  // personne avec un score à retaper, on le garde sur ce téléphone et on
+  // continuera d'essayer tout seul.
+  enqueueSaisie(id, who, sub);
+  closeSheet();
+  render();
 }
 
 // Écrit UNE équipe dans UN emplacement d'un match, en vérifiant que l'écriture
@@ -879,18 +1006,31 @@ async function submitScore(id){
 async function ecrireEmplacement(matchId, slot, nom){
   const champ = slot === 'A' ? 'teamA' : 'teamB';
   for(let tentative = 1; tentative <= 5; tentative++){
-    const cible = await readMatch(matchId);
-    if(!cible) return false;
+    let cible;
+    try{
+      cible = await readMatch(matchId);
+    }catch(e){
+      // AVANT : une lecture ratée à la 1re tentative faisait `return false`
+      // immédiatement — les 4 tentatives restantes n'étaient jamais utilisées.
+      // Une panne réseau d'une seconde suffisait à perdre la propagation.
+      // Maintenant, une lecture ratée est traitée comme une écriture ratée :
+      // on attend, et on retente.
+      await new Promise(r => setTimeout(r, 200 + Math.random()*400));
+      continue;
+    }
+    if(!cible) continue;   // ne devrait jamais arriver (les matchs sont tous seedés), garde défensive
     cible[champ] = nom;
-    // On ne fait passer le match "à jouer" que s'il attendait ses équipes :
-    // écraser un statut litige ou terminé serait pire que le problème d'origine.
     if(cible.teamA && cible.teamB && cible.status === 'attente') cible.status = 'a_jouer';
-    await writeMatch(matchId, cible);
+    try{
+      await writeMatch(matchId, cible);
+    }catch(e){
+      await new Promise(r => setTimeout(r, 200 + Math.random()*400));
+      continue;
+    }
 
-    const verif = await readMatch(matchId);
+    let verif;
+    try{ verif = await readMatch(matchId); }catch(e){ verif = null; }
     if(verif && verif[champ] === nom) return true;
-    // Délai aléatoire : si les deux propagations réessayaient au même rythme,
-    // elles se télescoperaient indéfiniment.
     await new Promise(r => setTimeout(r, 200 + Math.random()*400));
   }
   console.error('[propagate] impossible d\'inscrire', nom, 'dans', matchId, slot);
@@ -1328,7 +1468,17 @@ function renderAdmin(){
 // le score de A. Le tableau montrait alors un vainqueur avec le score du perdant.
 async function resolveDispute(id, winnerSlot, scores){
   if(!IS_ADMIN) return;
-  const m = await readMatch(id);
+  // Retentative sur la lecture : depuis que readMatch ne masque plus les
+  // pannes réseau (elles remontent en exception), un simple accroc lors d'un
+  // arbitrage ne doit pas planter l'action sans aucun message.
+  let m;
+  for(let tentative = 1; tentative <= 3; tentative++){
+    try{ m = await readMatch(id); break; }
+    catch(e){
+      if(tentative === 3){ alert('Réseau indisponible — réessaie dans quelques secondes.'); return; }
+      await new Promise(r => setTimeout(r, 300 + Math.random()*300));
+    }
+  }
   if(!m) return;
   let sA, sB;
   if(scores){
@@ -1342,7 +1492,12 @@ async function resolveDispute(id, winnerSlot, scores){
   m.status = 'termine';
   m.winner = winnerSlot;
   m.orga = { scoreA: sA, scoreB: sB, t: new Date().toLocaleTimeString('fr-FR') };
-  await writeMatch(id, m);
+  try{
+    await writeMatch(id, m);
+  }catch(e){
+    alert("Écriture impossible — vérifie le réseau et réessaie. Rien n'a été modifié.");
+    return;
+  }
   await propagate(id, m);
   matches[id] = m;
   render();
@@ -1535,8 +1690,11 @@ if(IS_ADMIN){
   } else {
     hideFatal();
     render();
-    await pollAll();
+    await pollAll();   // pollAll() se charge déjà de vider la file après sa 1re synchro réussie
   }
+  // Bandeau visible dès le chargement si une saisie est restée en attente
+  // d'une session précédente (téléphone fermé avant la reconnexion).
+  majBandeauFile();
 
   // Le polling tourne dans tous les cas : si le réseau revient, l'app se rattrape
   // toute seule sans que personne n'ait à recharger la page.
