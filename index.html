@@ -225,6 +225,17 @@
     font-size:12px; color:var(--sable-soft); background:rgba(217,165,74,0.1);
     border-radius:8px; padding:10px 12px; margin-bottom:14px; line-height:1.4;
   }
+  /* Choix de l'équipe : deux boutons, AUCUN présélectionné. L'ancien <select>
+     démarrait sur l'équipe A : un joueur de B qui ne le changeait pas saisissait
+     "pour A", et la vraie saisie de A écrasait la sienne au lieu de la confirmer.
+     Le match restait bloqué sur "1 saisie reçue" sans que personne comprenne. */
+  .who-row{display:flex; gap:10px;}
+  .who-btn{
+    flex:1; min-width:0; background:var(--navy-card); border:2px solid var(--line);
+    color:var(--text); border-radius:10px; padding:13px 10px; font-size:14px;
+    font-weight:600; cursor:pointer; line-height:1.3; font-family:inherit;
+  }
+  .who-btn.selected{border-color:var(--sable); background:rgba(249,194,77,0.14); color:var(--sable-soft);}
   .btn-row{display:flex; gap:10px; margin-top:18px;}
   button.primary{
     flex:1; background:var(--sable); color:#20140a; border:none;
@@ -297,7 +308,7 @@
 
 <main>
   <div class="sync" id="syncBar">
-    <span><span class="dot">●</span> <span id="syncTxt">connexion…</span> <span style="color:#5a708c;">· v11</span></span>
+    <span><span class="dot">●</span> <span id="syncTxt">connexion…</span> <span style="color:#5a708c;">· v12</span></span>
     <button id="refreshBtn">Actualiser</button>
   </div>
 
@@ -441,7 +452,19 @@ const DEVICE = (function(){
     return neuf();
   }
 })();
-let IS_ADMIN = sessionStorage.getItem('petanque-admin') === '1';
+// localStorage et non sessionStorage : Safari iOS décharge l'onglet quand il
+// passe en arrière-plan, et sessionStorage partait avec. L'organisateur devait
+// refaire 5 taps + code plusieurs fois dans la journée. Un bouton de sortie
+// explicite remplace l'expiration automatique.
+function lireAdmin(){
+  try{ return localStorage.getItem('petanque-admin') === '1' || sessionStorage.getItem('petanque-admin') === '1'; }
+  catch(e){ return false; }
+}
+let IS_ADMIN = lireAdmin();
+function quitterAdmin(){
+  try{ localStorage.removeItem('petanque-admin'); sessionStorage.removeItem('petanque-admin'); }catch(e){}
+  location.reload();
+}
 
 // Déclencheur discret : taper 5 fois sur "Tournoi" en haut à gauche dans les 2,5s.
 (function setupAdminTrigger(){
@@ -454,7 +477,7 @@ let IS_ADMIN = sessionStorage.getItem('petanque-admin') === '1';
       taps = 0;
       const code = prompt('Code organisateur :');
       if(code === ADMIN_CODE){
-        sessionStorage.setItem('petanque-admin','1');
+        try{ localStorage.setItem('petanque-admin','1'); }catch(e){ sessionStorage.setItem('petanque-admin','1'); }
         location.reload();
       } else if(code !== null){
         alert('Code incorrect.');
@@ -608,10 +631,29 @@ async function writeMatch(id, state){
 }
 
 // ---------- Poll / render ----------
+// ---------- Cache local du dernier état ----------
+// Avant : recharger la page sans réseau donnait l'écran fatal, et plus rien.
+// Sur un boulodrome en 4G intermittente, c'est le scénario le plus courant :
+// "je rafraîchis pour voir mon terrain, et je perds tout l'affichage".
+// On garde donc le dernier instantané réussi dans le téléphone. Il ne sert
+// QU'À L'AFFICHAGE : rien n'est jamais réécrit en base à partir du cache, et
+// le polling reprend dès que le réseau revient. Ce n'est pas un mode hors-ligne.
+const CLE_CACHE = 'petanque-cache';
+function sauverCache(all){
+  try{ localStorage.setItem(CLE_CACHE, JSON.stringify({all, t: Date.now()})); }catch(e){}
+}
+function lireCache(){
+  try{
+    const c = JSON.parse(localStorage.getItem(CLE_CACHE) || 'null');
+    return (c && c.all && typeof c.all === 'object') ? c : null;
+  }catch(e){ return null; }
+}
+
 async function pollAll(){
   try{
-    const all = await kvGetAll();          // 1 requête pour les 24 matchs + les équipes
+    const all = await kvGetAll();          // 1 requête pour les 19 matchs + les équipes
     hydrate(all);
+    sauverCache(all);
     const eq = all[KEY_EQUIPES];
     if(Array.isArray(eq)) equipes = eq;
     hideFatal();
@@ -718,9 +760,20 @@ function renderPublic(){
 }
 
 // ---------- Modal saisie score ----------
+// Équipe choisie dans l'écran de saisie. Remise à null à chaque ouverture :
+// on ne veut jamais qu'un choix précédent se retrouve pré-appliqué.
+let whoChoisi = null;
+function choisirEquipe(w){
+  whoChoisi = w;
+  $('#whoA').classList.toggle('selected', w === 'A');
+  $('#whoB').classList.toggle('selected', w === 'B');
+  const e = $('#submitErr'); if(e) e.textContent = '';
+}
+
 function openMatch(id){
   const m = matches[id];
   if(!m || !m.teamA || !m.teamB) return;
+  whoChoisi = null;
   const sheet = $('#sheet');
   sheet.innerHTML = `
     <button class="close-x" onclick="closeSheet()">✕</button>
@@ -728,11 +781,11 @@ function openMatch(id){
     <div class="sub">Saisis le score final du match. Le match passe à "Terminé" quand les deux équipes ont saisi le même résultat.</div>
     ${(m.subA || m.subB) ? renderSubmissionsView(m) : ''}
     <div class="field">
-      <label>Qui saisit ce score ?</label>
-      <select id="whoAmI">
-        <option value="A">${esc(m.teamA)}</option>
-        <option value="B">${esc(m.teamB)}</option>
-      </select>
+      <label>Tu joues dans quelle équipe ? <span style="color:var(--sable-soft)">(obligatoire)</span></label>
+      <div class="who-row">
+        <button type="button" class="who-btn" id="whoA" onclick="choisirEquipe('A')">${esc(m.teamA)}</button>
+        <button type="button" class="who-btn" id="whoB" onclick="choisirEquipe('B')">${esc(m.teamB)}</button>
+      </div>
     </div>
     <div class="score-pair">
       <div class="field">
@@ -928,10 +981,13 @@ function majBandeauFile(){
   if(!el){
     el = document.createElement('div');
     el.id = 'bandeauFile';
-    el.style.cssText = 'position:sticky;top:0;z-index:25;background:#d9a54a;color:#20140a;'
+    // Placé DANS le header (lui-même sticky) : l'ancienne version le collait en
+    // haut du body avec un z-index supérieur, et il recouvrait le logo au scroll.
+    el.style.cssText = 'background:#d9a54a;color:#20140a;margin:12px -18px 0;'
       + 'font-size:12.5px;font-weight:600;padding:9px 14px;text-align:center;'
       + 'display:flex;align-items:center;justify-content:center;gap:10px;flex-wrap:wrap;';
-    document.body.prepend(el);
+    const bandeauDeco = document.querySelector('header .bandeau');
+    bandeauDeco ? bandeauDeco.before(el) : document.querySelector('header').appendChild(el);
   }
   el.innerHTML = `⏳ ${n} saisie${n>1?'s':''} en attente d'envoi — réessai automatique`
     + `<button onclick="traiterFileAttente()" style="background:#20140a;color:#f9c24d;border:none;`
@@ -947,10 +1003,14 @@ document.addEventListener('visibilitychange', () => {
 });
 
 async function submitScore(id){
-  const who = $('#whoAmI').value;
+  const who = whoChoisi;
   const scoreA = parseInt($('#scoreA').value);
   const scoreB = parseInt($('#scoreB').value);
   const errEl = $('#submitErr');
+  if(who !== 'A' && who !== 'B'){
+    errEl.textContent = 'Indique d\'abord dans quelle équipe tu joues.';
+    return;
+  }
   if(isNaN(scoreA) || isNaN(scoreB)){
     errEl.textContent = 'Renseigne les deux scores.';
     return;
@@ -1160,12 +1220,12 @@ async function toutReinitialiser(){
   // Un clic se fait par réflexe, taper un mot demande une intention.
   const saisi = prompt(
     "RÉINITIALISATION COMPLÈTE\n\n"
-    + "Les 22 matchs repassent à zéro. Les noms d'équipe sont conservés.\n"
+    + "Les 19 matchs repassent à zéro. Les noms d'équipe sont conservés.\n"
     + "Aucun score ne sera récupérable.\n\n"
     + "Tape REINITIALISER en majuscules pour confirmer :");
   if(saisi !== 'REINITIALISER') return;
   try{
-    await seedMatches(equipes);   // réécrit les 22 matchs + les équipes en 1 requête
+    await seedMatches(equipes);   // réécrit les 19 matchs + les équipes en 1 requête
     await pollAll();
     alert('Tournoi remis à zéro. Les noms d\'équipe sont conservés.');
   }catch(e){
@@ -1292,7 +1352,10 @@ function renderAdmin(){
     return m && m.status !== 'termine' && m.status !== 'litige'
              && ((m.subA && !m.subB) || (m.subB && !m.subA));
   });
-  let html = `<div class="admin-banner">Mode organisateur — cette vue n'est pas destinée aux équipes</div>`;
+  let html = `<div class="admin-banner" style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+    <span>Mode organisateur — cette vue n'est pas destinée aux équipes</span>
+    <button onclick="quitterAdmin()" style="background:none;border:1px solid rgba(232,149,106,0.5);color:#e8956a;border-radius:7px;padding:4px 9px;font-size:11px;cursor:pointer;white-space:nowrap;">Quitter</button>
+  </div>`;
 
   // Vérification de cohérence à chaque affichage. Placée EN TÊTE : si le tableau
   // a décroché, c'est ce qu'il faut traiter avant tout le reste.
@@ -1441,6 +1504,13 @@ function renderAdmin(){
     <button class="ghost" onclick="resetTerrains()" style="margin-left:8px;">Rétablir par défaut</button>
   </div></div>`;
 
+  // Sauvegarde : l'état complet ne vit qu'en base. Si Supabase tombe en cours de
+  // journée, rien n'existe ailleurs. Un fichier JSON téléchargé (+ un résumé
+  // lisible copié dans le presse-papier) sert de filet ET de justificatif.
+  html += `<div class="admin-section"><h3>Sauvegarde</h3>
+    <div class="empty" style="margin-bottom:10px;">Télécharge l'état complet (équipes, terrains, 19 matchs) et copie un résumé lisible des résultats. À faire après chaque vague.</div>
+    <button class="primary" style="width:100%;" onclick="exporterEtat()">Sauvegarder maintenant</button></div>`;
+
   html += `<div class="admin-section"><h3>Équipes (avant démarrage)</h3><div id="teamEdits">`;
   equipes.forEach((name,i)=>{
     html += `<div class="team-edit-row"><span>${i+1}.</span><input type="text" value="${esc(name)}" data-idx="${i}"></div>`;
@@ -1451,7 +1521,7 @@ function renderAdmin(){
   // Réintroduite sur demande, mais protégée par un mot à taper — et toujours
   // inaccessible hors mode organisateur, IS_ADMIN étant vérifié côté fonction.
   html += `<div class="admin-section"><h3>Fin de démonstration</h3>
-    <div class="empty" style="margin-bottom:10px;">Efface les scores des 22 matchs et conserve les noms d'équipe.</div>
+    <div class="empty" style="margin-bottom:10px;">Efface les scores des 19 matchs et conserve les noms d'équipe.</div>
     <button onclick="toutReinitialiser()"
       style="background:var(--rouille);color:#fff;border:none;border-radius:9px;
              padding:12px 18px;font-size:14px;font-weight:700;cursor:pointer;width:100%;">
@@ -1536,6 +1606,54 @@ async function arbitrerAvecScore(id){
   }
 }
 
+function resumeLisible(){
+  const lignes = [`Tournoi pétanque SOLEAM 70 ans — état au ${new Date().toLocaleString('fr-FR')}`, ''];
+  for(const bracket of ['principal','consolante']){
+    lignes.push(bracket === 'principal' ? '== TABLEAU PRINCIPAL ==' : '== CONSOLANTE ==');
+    for(const id of ALL_MATCH_IDS){
+      const t = TOPOLOGY[id]; if(t.bracket !== bracket) continue;
+      const m = matches[id] || {};
+      const src = m.orga || m.subA || m.subB;
+      let res;
+      if(m.status === 'termine' && src){
+        res = `${src.scoreA}-${src.scoreB} → ${m.winner === 'A' ? m.teamA : m.teamB}` + (m.orga ? ' (arbitré)' : '');
+      } else if(m.status === 'litige') res = 'LITIGE';
+      else if(m.subA || m.subB) res = '1 saisie';
+      else res = (m.teamA && m.teamB) ? 'à jouer' : 'en attente';
+      lignes.push(`${id} · ${ROUND_LABELS[bracket][t.round]} · T${terrains[id] || '?'} · ${m.teamA || '—'} vs ${m.teamB || '—'} · ${res}`);
+    }
+    lignes.push('');
+  }
+  const cl = classementConsolante();
+  if(cl.length){
+    lignes.push('== CLASSEMENT CONSOLANTE ==');
+    cl.forEach((x,i) => lignes.push(`${x.joue ? (i+1) : '–'}. ${x.nom}${x.joue ? ` (${x.victoire?'V':'D'} ${x.marques}/${x.encaisses})` : ' (non joué)'}`));
+  }
+  return lignes.join('\n');
+}
+
+async function exporterEtat(){
+  if(!IS_ADMIN) return;
+  const etat = { exporte: new Date().toISOString(), version: 'v12', equipes, terrains, matches };
+  const nom = 'petanque-soleam-' + new Date().toISOString().replace(/[:.]/g,'-').slice(0,19) + '.json';
+  let telecharge = false, copie = false;
+  try{
+    const blob = new Blob([JSON.stringify(etat, null, 2)], {type:'application/json'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = nom;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(a.href), 5000);
+    telecharge = true;
+  }catch(e){ console.error('[export] téléchargement', e); }
+  try{
+    await navigator.clipboard.writeText(resumeLisible());
+    copie = true;
+  }catch(e){ console.error('[export] presse-papier', e); }
+  alert((telecharge ? `Fichier ${nom} téléchargé.` : 'Téléchargement impossible sur ce navigateur.')
+    + '\n' + (copie ? 'Résumé lisible copié dans le presse-papier (colle-le dans une note ou un SMS).'
+                    : 'Copie dans le presse-papier refusée par le navigateur.'));
+}
+
 async function saveTerrains(){
   if(!IS_ADMIN) return;
   const inputs = document.querySelectorAll('#terrainEdits input[data-match]');
@@ -1581,7 +1699,7 @@ async function resetTerrains(){
   if(!IS_ADMIN) return;
   if(!confirm("Rétablir l'affectation par défaut ?\n\n"
     + "Vague 1 : terrains 1 à 8\nVague 2 : quarts sur 1-4, consolante sur 5-8\n"
-    + "Vague 3 : terrains 1 à 4\nVague 4 : terrains 1 et 2")) return;
+    + "Vague 3 : terrains 1 et 2\nVague 4 : terrain 1")) return;
   try{
     await kvSet(KEY_TERRAINS, TERRAINS_DEFAUT);
     terrains = Object.assign({}, TERRAINS_DEFAUT);
@@ -1684,9 +1802,21 @@ if(IS_ADMIN){
   }
   if(!ok){
     setSync(false, 'connexion impossible');
-    showFatal('Impossible de joindre la base de données.\n\nMotif : ' + dernierMotif
-      + '\n\nVérifie ta connexion et actualise la page. Si le message persiste, '
-      + 'montre-le à l\'organisateur.');
+    const cache = lireCache();
+    if(cache){
+      // Dernier état connu : lecture seule, jamais réécrit en base.
+      hydrate(cache.all);
+      if(Array.isArray(cache.all[KEY_EQUIPES])) equipes = cache.all[KEY_EQUIPES];
+      render();
+      const heure = new Date(cache.t).toLocaleTimeString('fr-FR', {hour:'2-digit', minute:'2-digit'});
+      showFatal('Hors ligne — tableau tel qu\'il était à ' + heure + '. '
+        + 'Il se mettra à jour tout seul dès que le réseau revient. '
+        + 'Tu peux quand même saisir un score : il partira automatiquement.');
+    } else {
+      showFatal('Impossible de joindre la base de données.\n\nMotif : ' + dernierMotif
+        + '\n\nVérifie ta connexion et actualise la page. Si le message persiste, '
+        + 'montre-le à l\'organisateur.');
+    }
   } else {
     hideFatal();
     render();
